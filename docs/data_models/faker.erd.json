@@ -1,0 +1,444 @@
+{
+  "schema_version": 1,
+  "diagram_type": "erd",
+  "meta": {
+    "title": "Faker synthetic layer",
+    "subtitle": "Additional customers and transactions, stored in the same tables as the Czech data so they generate real CDC, and always labelled.",
+    "locale": "en",
+    "output": "docs/html-diagrams/faker.html",
+    "quality_profile": "showcase"
+  },
+  "layout": {
+    "mode": "grid",
+    "gapX": 88,
+    "gapY": 40
+  },
+  "entities": [
+    {
+      "id": "synthetic_batch",
+      "label": "synthetic_batch",
+      "tag": "generator run",
+      "row": 0,
+      "col": 0,
+      "attributes": [
+        {
+          "name": "synthetic_batch_id",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "generator_version",
+          "type": "varchar(32)"
+        },
+        {
+          "name": "faker_version",
+          "type": "varchar(16)"
+        },
+        {
+          "name": "random_seed",
+          "type": "bigint"
+        },
+        {
+          "name": "locale",
+          "type": "varchar(8)"
+        },
+        {
+          "name": "clients_created",
+          "type": "int"
+        },
+        {
+          "name": "accounts_created",
+          "type": "int"
+        },
+        {
+          "name": "transactions_created",
+          "type": "int"
+        },
+        {
+          "name": "business_date_from",
+          "type": "date"
+        },
+        {
+          "name": "business_date_to",
+          "type": "date"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamptz"
+        }
+      ],
+      "width": 244
+    },
+    {
+      "id": "synthetic_client_profile",
+      "label": "synthetic_client_profile",
+      "tag": "Faker only",
+      "row": 0,
+      "col": 1,
+      "attributes": [
+        {
+          "name": "client_id",
+          "type": "int",
+          "key": [
+            "pk",
+            "fk"
+          ],
+          "references": "fin_client.client_id"
+        },
+        {
+          "name": "full_name",
+          "type": "varchar(120)"
+        },
+        {
+          "name": "email",
+          "type": "varchar(255)",
+          "key": "uk"
+        },
+        {
+          "name": "phone",
+          "type": "varchar(32)"
+        },
+        {
+          "name": "synthetic_batch_id",
+          "type": "int",
+          "key": "fk",
+          "references": "synthetic_batch.synthetic_batch_id"
+        }
+      ]
+    },
+    {
+      "id": "fin_client",
+      "label": "fin_client",
+      "tag": "shared tables, Faker rows",
+      "row": 0,
+      "col": 2,
+      "attributes": [
+        {
+          "name": "client_id",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "birth_date",
+          "type": "date"
+        },
+        {
+          "name": "gender",
+          "type": "char(1)"
+        },
+        {
+          "name": "district_id",
+          "type": "smallint",
+          "key": "fk",
+          "references": "fin_district.district_id"
+        },
+        {
+          "name": "data_origin",
+          "type": "varchar(16)"
+        },
+        {
+          "name": "synthetic_batch_id",
+          "type": "int",
+          "key": "fk",
+          "references": "synthetic_batch.synthetic_batch_id"
+        }
+      ]
+    },
+    {
+      "id": "fin_disp",
+      "label": "fin_disp",
+      "tag": "shared tables, Faker rows",
+      "row": 0,
+      "col": 3,
+      "attributes": [
+        {
+          "name": "disp_id",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "client_id",
+          "type": "int",
+          "key": "fk",
+          "references": "fin_client.client_id"
+        },
+        {
+          "name": "account_id",
+          "type": "int",
+          "key": "fk",
+          "references": "fin_account.account_id"
+        },
+        {
+          "name": "disp_type",
+          "type": "char(1)"
+        },
+        {
+          "name": "data_origin",
+          "type": "varchar(16)"
+        },
+        {
+          "name": "synthetic_batch_id",
+          "type": "int",
+          "key": "fk",
+          "references": "synthetic_batch.synthetic_batch_id"
+        }
+      ]
+    },
+    {
+      "id": "fin_account",
+      "label": "fin_account",
+      "tag": "shared tables, Faker rows",
+      "row": 1,
+      "col": 3,
+      "attributes": [
+        {
+          "name": "account_id",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "district_id",
+          "type": "smallint",
+          "key": "fk",
+          "references": "fin_district.district_id"
+        },
+        {
+          "name": "create_date",
+          "type": "date"
+        },
+        {
+          "name": "frequency",
+          "type": "char(1)"
+        },
+        {
+          "name": "data_origin",
+          "type": "varchar(16)"
+        },
+        {
+          "name": "synthetic_batch_id",
+          "type": "int",
+          "key": "fk",
+          "references": "synthetic_batch.synthetic_batch_id"
+        }
+      ]
+    },
+    {
+      "id": "fin_trans",
+      "label": "fin_trans",
+      "tag": "shared tables, Faker rows",
+      "row": 1,
+      "col": 2,
+      "attributes": [
+        {
+          "name": "trans_id",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "account_id",
+          "type": "int",
+          "key": "fk",
+          "references": "fin_account.account_id"
+        },
+        {
+          "name": "trans_date",
+          "type": "date"
+        },
+        {
+          "name": "amount",
+          "type": "numeric(12,2)"
+        },
+        {
+          "name": "balance",
+          "type": "numeric(12,2)"
+        },
+        {
+          "name": "trans_type",
+          "type": "char(1)"
+        },
+        {
+          "name": "operation",
+          "type": "char(3)"
+        },
+        {
+          "name": "category",
+          "type": "char(2)"
+        },
+        {
+          "name": "other_bank_id",
+          "type": "char(2)"
+        },
+        {
+          "name": "other_account_id",
+          "type": "int"
+        },
+        {
+          "name": "recorded_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "data_origin",
+          "type": "varchar(16)"
+        },
+        {
+          "name": "synthetic_batch_id",
+          "type": "int",
+          "key": "fk",
+          "references": "synthetic_batch.synthetic_batch_id"
+        }
+      ]
+    },
+    {
+      "id": "fin_district",
+      "label": "fin_district",
+      "tag": "real reference data",
+      "row": 0,
+      "col": 4,
+      "attributes": [
+        {
+          "name": "district_id",
+          "type": "smallint",
+          "key": "pk"
+        }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "synthetic_client_profile_client_id",
+      "from": "synthetic_client_profile",
+      "to": "fin_client",
+      "label": "client_id",
+      "fromCardinality": "one",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "synthetic_client_profile_synthetic_batch_id",
+      "from": "synthetic_client_profile",
+      "to": "synthetic_batch",
+      "label": "synthetic_batch_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fin_client_district_id",
+      "from": "fin_client",
+      "to": "fin_district",
+      "label": "district_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fin_client_synthetic_batch_id",
+      "from": "fin_client",
+      "to": "synthetic_batch",
+      "label": "synthetic_batch_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false,
+      "variant": "dashed"
+    },
+    {
+      "id": "fin_disp_client_id",
+      "from": "fin_disp",
+      "to": "fin_client",
+      "label": "client_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fin_disp_account_id",
+      "from": "fin_disp",
+      "to": "fin_account",
+      "label": "account_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fin_disp_synthetic_batch_id",
+      "from": "fin_disp",
+      "to": "synthetic_batch",
+      "label": "synthetic_batch_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false,
+      "variant": "dashed"
+    },
+    {
+      "id": "fin_account_district_id",
+      "from": "fin_account",
+      "to": "fin_district",
+      "label": "district_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fin_account_synthetic_batch_id",
+      "from": "fin_account",
+      "to": "synthetic_batch",
+      "label": "synthetic_batch_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false,
+      "variant": "dashed"
+    },
+    {
+      "id": "fin_trans_account_id",
+      "from": "fin_trans",
+      "to": "fin_account",
+      "label": "account_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fin_trans_synthetic_batch_id",
+      "from": "fin_trans",
+      "to": "synthetic_batch",
+      "label": "synthetic_batch_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false,
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "rose",
+      "title": "Keeping synthetic data separate",
+      "items": [
+        "Every Faker row has data_origin = faker_synthetic and a synthetic_batch_id. Every original row has czech_original and a null batch.",
+        "Faker IDs start at 900,000,000. The highest original ID is 3,682,987. A CHECK constraint ties ID range, origin and batch together.",
+        "Faker transactions post only to Faker accounts, so original balances and reconciliation results stay untouched."
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Why a separate profile table",
+      "items": [
+        "The Czech data has no names or contact details. Names, emails and phones exist only for Faker clients, so original rows keep their source shape."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Reproducibility",
+      "items": [
+        "random_seed and generator versions on synthetic_batch let any batch be regenerated."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1000 @@
+{
+  "schema_version": 1,
+  "diagram_type": "erd",
+  "meta": {
+    "title": "Czech banking: Gold star schema",
+    "subtitle": "Three fact tables share dimensions. dim_data_origin separates original rows from Faker rows on every fact.",
+    "locale": "en",
+    "output": "docs/html-diagrams/czech_gold.html",
+    "quality_profile": "standard"
+  },
+  "layout": {
+    "mode": "grid",
+    "gapX": 88,
+    "gapY": 40
+  },
+  "entities": [
+    {
+      "id": "fact_transaction",
+      "label": "fact_transaction",
+      "tag": "facts",
+      "row": 0,
+      "col": 1,
+      "attributes": [
+        {
+          "name": "transaction_id",
+          "type": "bigint",
+          "key": "pk"
+        },
+        {
+          "name": "date_key",
+          "type": "int",
+          "key": "fk",
+          "references": "dim_date.date_key"
+        },
+        {
+          "name": "account_key",
+          "type": "int",
+          "key": "fk",
+          "references": "dim_account.account_key"
+        },
+        {
+          "name": "owner_client_key",
+          "type": "int",
+          "key": "fk",
+          "references": "dim_client.client_key"
+        },
+        {
+          "name": "branch_district_key",
+          "type": "int",
+          "key": "fk",
+          "references": "dim_district.district_key"
+        },
+        {
+          "name": "client_district_key",
+          "type": "int",
+          "key": "fk",
+          "references": "dim_district.district_key"
+        },
+        {
+          "name": "transaction_type_key",
+          "type": "int",
+          "key": "fk",
+          "references": "dim_transaction_type.transaction_type_key"
+        },
+        {
+          "name": "order_key",
+          "type": "int",
+          "key": "fk",
+          "references": "dim_standing_order.order_key"
+        },
+        {
+          "name": "loan_key",
+          "type": "int",
+          "key": "fk",
+          "references": "dim_loan.loan_key"
+        },
+        {
+          "name": "card_key",
+          "type": "int",
+          "key": "fk",
+          "references": "dim_card.card_key"
+        },
+        {
+          "name": "data_origin_key",
+          "type": "int",
+          "key": "fk",
+          "references": "dim_data_origin.data_origin_key"
+        },
+        {
+          "name": "partner_bank_code",
+          "type": "string"
+        },
+        {
+          "name": "partner_account_id",
+          "type": "bigint"
+        },
+        {
+          "name": "amount",
+          "type": "decimal"
+        },
+        {
+          "name": "balance_after",
+          "type": "decimal"
+        },
+        {
+          "name": "source_committed_at",
+          "type": "timestamp"
+        },
+        {
+          "name": "warehouse_loaded_at",
+          "type": "timestamp"
+        },
+        {
+          "name": "ingestion_lag_seconds",
+          "type": "int"
+        },
+        {
+          "name": "is_late_arriving",
+          "type": "boolean"
+        },
+        {
+          "name": "is_deleted",
+          "type": "boolean"
+        }
+      ],
+      "width": 245
+    },
+    {
+      "id": "fact_account_balance_daily",
+      "label": "fact_account_balance_daily",
+      "tag": "facts",
+      "row": 1,
+      "col": 1,
+      "attributes": [
+        {
+          "name": "date_key",
+          "type": "int",
+          "key": [
+            "pk",
+            "fk"
+          ],
+          "references": "dim_date.date_key"
+        },
+        {
+          "name": "account_key",
+          "type": "int",
+          "key": [
+            "pk",
+            "fk"
+          ],
+          "references": "dim_account.account_key"
+        },
+        {
+          "name": "owner_client_key",
+          "type": "int",
+          "key": "fk",
+          "references": "dim_client.client_key"
+        },
+        {
+          "name": "branch_district_key",
+          "type": "int",
+          "key": "fk",
+          "references": "dim_district.district_key"
+        },
+        {
+          "name": "client_district_key",
+          "type": "int",
+          "key": "fk",
+          "references": "dim_district.district_key"
+        },
+        {
+          "name": "data_origin_key",
+          "type": "int",
+          "key": "fk",
+          "references": "dim_data_origin.data_origin_key"
+        },
+        {
+          "name": "transaction_count",
+          "type": "int"
+        },
+        {
+          "name": "credit_amount",
+          "type": "decimal"
+        },
+        {
+          "name": "debit_amount",
+          "type": "decimal"
+        },
+        {
+          "name": "net_amount",
+          "type": "decimal"
+        },
+        {
+          "name": "opening_balance",
+          "type": "decimal"
+        },
+        {
+          "name": "closing_balance",
+          "type": "decimal"
+        },
+        {
+          "name": "balance_variance",
+          "type": "decimal"
+        },
+        {
+          "name": "is_reconciled",
+          "type": "boolean"
+        }
+      ]
+    },
+    {
+      "id": "fact_loan",
+      "label": "fact_loan",
+      "tag": "facts",
+      "row": 2,
+      "col": 1,
+      "attributes": [
+        {
+          "name": "loan_key",
+          "type": "int",
+          "key": [
+            "pk",
+            "fk"
+          ],
+          "references": "dim_loan.loan_key"
+        },
+        {
+          "name": "granted_date_key",
+          "type": "int",
+          "key": "fk",
+          "references": "dim_date.date_key"
+        },
+        {
+          "name": "account_key",
+          "type": "int",
+          "key": "fk",
+          "references": "dim_account.account_key"
+        },
+        {
+          "name": "owner_client_key",
+          "type": "int",
+          "key": "fk",
+          "references": "dim_client.client_key"
+        },
+        {
+          "name": "branch_district_key",
+          "type": "int",
+          "key": "fk",
+          "references": "dim_district.district_key"
+        },
+        {
+          "name": "client_district_key",
+          "type": "int",
+          "key": "fk",
+          "references": "dim_district.district_key"
+        },
+        {
+          "name": "data_origin_key",
+          "type": "int",
+          "key": "fk",
+          "references": "dim_data_origin.data_origin_key"
+        },
+        {
+          "name": "loan_amount",
+          "type": "decimal"
+        },
+        {
+          "name": "duration_months",
+          "type": "int"
+        },
+        {
+          "name": "monthly_payment",
+          "type": "decimal"
+        },
+        {
+          "name": "payments_made",
+          "type": "int"
+        },
+        {
+          "name": "payments_expected",
+          "type": "int"
+        },
+        {
+          "name": "amount_repaid",
+          "type": "decimal"
+        },
+        {
+          "name": "amount_outstanding",
+          "type": "decimal"
+        }
+      ],
+      "width": 245
+    },
+    {
+      "id": "dim_transaction_type",
+      "label": "dim_transaction_type",
+      "tag": "transaction dimensions",
+      "row": 0,
+      "col": 0,
+      "attributes": [
+        {
+          "name": "transaction_type_key",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "type_code",
+          "type": "string"
+        },
+        {
+          "name": "type_name",
+          "type": "string"
+        },
+        {
+          "name": "direction",
+          "type": "string"
+        },
+        {
+          "name": "operation_code",
+          "type": "string"
+        },
+        {
+          "name": "operation_name",
+          "type": "string"
+        },
+        {
+          "name": "category_code",
+          "type": "string"
+        },
+        {
+          "name": "category_name",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "id": "dim_standing_order",
+      "label": "dim_standing_order",
+      "tag": "transaction dimensions",
+      "row": 1,
+      "col": 0,
+      "attributes": [
+        {
+          "name": "order_key",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "order_id",
+          "type": "bigint"
+        },
+        {
+          "name": "account_id",
+          "type": "bigint"
+        },
+        {
+          "name": "partner_bank_code",
+          "type": "string"
+        },
+        {
+          "name": "partner_account_id",
+          "type": "bigint"
+        },
+        {
+          "name": "category_code",
+          "type": "string"
+        },
+        {
+          "name": "category_name",
+          "type": "string"
+        },
+        {
+          "name": "order_amount",
+          "type": "decimal"
+        }
+      ]
+    },
+    {
+      "id": "dim_card",
+      "label": "dim_card",
+      "tag": "transaction dimensions",
+      "row": 2,
+      "col": 0,
+      "attributes": [
+        {
+          "name": "card_key",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "card_id",
+          "type": "bigint"
+        },
+        {
+          "name": "disp_id",
+          "type": "bigint"
+        },
+        {
+          "name": "card_type",
+          "type": "string"
+        },
+        {
+          "name": "card_type_name",
+          "type": "string"
+        },
+        {
+          "name": "issued_date",
+          "type": "date"
+        }
+      ]
+    },
+    {
+      "id": "dim_loan",
+      "label": "dim_loan",
+      "tag": "transaction dimensions",
+      "row": 3,
+      "col": 0,
+      "attributes": [
+        {
+          "name": "loan_key",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "loan_id",
+          "type": "bigint"
+        },
+        {
+          "name": "account_id",
+          "type": "bigint"
+        },
+        {
+          "name": "status_code",
+          "type": "string"
+        },
+        {
+          "name": "status_name",
+          "type": "string"
+        },
+        {
+          "name": "is_finished",
+          "type": "boolean"
+        },
+        {
+          "name": "is_problem",
+          "type": "boolean"
+        },
+        {
+          "name": "valid_from",
+          "type": "timestamp"
+        },
+        {
+          "name": "valid_to",
+          "type": "timestamp"
+        },
+        {
+          "name": "is_current",
+          "type": "boolean"
+        }
+      ]
+    },
+    {
+      "id": "dim_date",
+      "label": "dim_date",
+      "tag": "shared dimensions",
+      "row": 0,
+      "col": 2,
+      "attributes": [
+        {
+          "name": "date_key",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "full_date",
+          "type": "date"
+        },
+        {
+          "name": "year",
+          "type": "int"
+        },
+        {
+          "name": "quarter",
+          "type": "int"
+        },
+        {
+          "name": "month",
+          "type": "int"
+        },
+        {
+          "name": "month_name",
+          "type": "string"
+        },
+        {
+          "name": "day_of_week",
+          "type": "int"
+        },
+        {
+          "name": "is_weekend",
+          "type": "boolean"
+        },
+        {
+          "name": "is_month_end",
+          "type": "boolean"
+        }
+      ]
+    },
+    {
+      "id": "dim_data_origin",
+      "label": "dim_data_origin",
+      "tag": "shared dimensions",
+      "row": 1,
+      "col": 2,
+      "attributes": [
+        {
+          "name": "data_origin_key",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "origin_code",
+          "type": "string"
+        },
+        {
+          "name": "origin_name",
+          "type": "string"
+        },
+        {
+          "name": "is_synthetic",
+          "type": "boolean"
+        }
+      ]
+    },
+    {
+      "id": "dim_account",
+      "label": "dim_account",
+      "tag": "shared dimensions",
+      "row": 2,
+      "col": 2,
+      "attributes": [
+        {
+          "name": "account_key",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "account_id",
+          "type": "bigint"
+        },
+        {
+          "name": "statement_frequency",
+          "type": "string"
+        },
+        {
+          "name": "create_date",
+          "type": "date"
+        },
+        {
+          "name": "branch_district_id",
+          "type": "int"
+        },
+        {
+          "name": "branch_district_name",
+          "type": "string"
+        },
+        {
+          "name": "branch_region",
+          "type": "string"
+        },
+        {
+          "name": "valid_from",
+          "type": "timestamp"
+        },
+        {
+          "name": "valid_to",
+          "type": "timestamp"
+        },
+        {
+          "name": "is_current",
+          "type": "boolean"
+        }
+      ]
+    },
+    {
+      "id": "dim_client",
+      "label": "dim_client",
+      "tag": "shared dimensions",
+      "row": 3,
+      "col": 2,
+      "attributes": [
+        {
+          "name": "client_key",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "client_id",
+          "type": "bigint"
+        },
+        {
+          "name": "gender",
+          "type": "string"
+        },
+        {
+          "name": "birth_date",
+          "type": "date"
+        },
+        {
+          "name": "home_district_id",
+          "type": "int"
+        },
+        {
+          "name": "home_district_name",
+          "type": "string"
+        },
+        {
+          "name": "home_region",
+          "type": "string"
+        },
+        {
+          "name": "valid_from",
+          "type": "timestamp"
+        },
+        {
+          "name": "valid_to",
+          "type": "timestamp"
+        },
+        {
+          "name": "is_current",
+          "type": "boolean"
+        }
+      ]
+    },
+    {
+      "id": "dim_district",
+      "label": "dim_district",
+      "tag": "geography",
+      "row": 0,
+      "col": 3,
+      "attributes": [
+        {
+          "name": "district_key",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "district_id",
+          "type": "int"
+        },
+        {
+          "name": "district_name",
+          "type": "string"
+        },
+        {
+          "name": "region",
+          "type": "string"
+        },
+        {
+          "name": "num_inhabitants",
+          "type": "int"
+        },
+        {
+          "name": "num_municipalities_lt500",
+          "type": "int"
+        },
+        {
+          "name": "num_municipalities_500to1999",
+          "type": "int"
+        },
+        {
+          "name": "num_municipalities_2000to9999",
+          "type": "int"
+        },
+        {
+          "name": "num_municipalities_gte10000",
+          "type": "int"
+        },
+        {
+          "name": "num_cities",
+          "type": "int"
+        },
+        {
+          "name": "ratio_urban",
+          "type": "decimal"
+        },
+        {
+          "name": "average_salary",
+          "type": "decimal"
+        },
+        {
+          "name": "unemployment_rate95",
+          "type": "decimal"
+        },
+        {
+          "name": "unemployment_rate96",
+          "type": "decimal"
+        },
+        {
+          "name": "num_entrep_per1000",
+          "type": "int"
+        },
+        {
+          "name": "num_crimes95",
+          "type": "int"
+        },
+        {
+          "name": "num_crimes96",
+          "type": "int"
+        }
+      ],
+      "width": 273
+    },
+    {
+      "id": "bridge_account_client",
+      "label": "bridge_account_client",
+      "tag": "bridge",
+      "row": 1,
+      "col": 3,
+      "attributes": [
+        {
+          "name": "disp_id",
+          "type": "bigint",
+          "key": "pk"
+        },
+        {
+          "name": "account_key",
+          "type": "int",
+          "key": "fk",
+          "references": "dim_account.account_key"
+        },
+        {
+          "name": "client_key",
+          "type": "int",
+          "key": "fk",
+          "references": "dim_client.client_key"
+        },
+        {
+          "name": "disposition_type",
+          "type": "string"
+        }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "fact_transaction_date_key",
+      "from": "fact_transaction",
+      "to": "dim_date",
+      "label": "date_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fact_transaction_account_key",
+      "from": "fact_transaction",
+      "to": "dim_account",
+      "label": "account_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fact_transaction_owner_client_key",
+      "from": "fact_transaction",
+      "to": "dim_client",
+      "label": "owner_client_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fact_transaction_branch_district_key",
+      "from": "fact_transaction",
+      "to": "dim_district",
+      "label": "branch_district_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fact_transaction_client_district_key",
+      "from": "fact_transaction",
+      "to": "dim_district",
+      "label": "client_district_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fact_transaction_transaction_type_key",
+      "from": "fact_transaction",
+      "to": "dim_transaction_type",
+      "label": "transaction_type_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fact_transaction_order_key",
+      "from": "fact_transaction",
+      "to": "dim_standing_order",
+      "label": "order_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false,
+      "variant": "dashed"
+    },
+    {
+      "id": "fact_transaction_loan_key",
+      "from": "fact_transaction",
+      "to": "dim_loan",
+      "label": "loan_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false,
+      "variant": "dashed"
+    },
+    {
+      "id": "fact_transaction_card_key",
+      "from": "fact_transaction",
+      "to": "dim_card",
+      "label": "card_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false,
+      "variant": "dashed"
+    },
+    {
+      "id": "fact_transaction_data_origin_key",
+      "from": "fact_transaction",
+      "to": "dim_data_origin",
+      "label": "data_origin_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fact_account_balance_daily_date_key",
+      "from": "fact_account_balance_daily",
+      "to": "dim_date",
+      "label": "date_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fact_account_balance_daily_account_key",
+      "from": "fact_account_balance_daily",
+      "to": "dim_account",
+      "label": "account_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fact_account_balance_daily_owner_client_key",
+      "from": "fact_account_balance_daily",
+      "to": "dim_client",
+      "label": "owner_client_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fact_account_balance_daily_branch_district_key",
+      "from": "fact_account_balance_daily",
+      "to": "dim_district",
+      "label": "branch_district_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fact_account_balance_daily_client_district_key",
+      "from": "fact_account_balance_daily",
+      "to": "dim_district",
+      "label": "client_district_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fact_account_balance_daily_data_origin_key",
+      "from": "fact_account_balance_daily",
+      "to": "dim_data_origin",
+      "label": "data_origin_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fact_loan_loan_key",
+      "from": "fact_loan",
+      "to": "dim_loan",
+      "label": "loan_key",
+      "fromCardinality": "one",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fact_loan_granted_date_key",
+      "from": "fact_loan",
+      "to": "dim_date",
+      "label": "granted_date_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fact_loan_account_key",
+      "from": "fact_loan",
+      "to": "dim_account",
+      "label": "account_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fact_loan_owner_client_key",
+      "from": "fact_loan",
+      "to": "dim_client",
+      "label": "owner_client_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fact_loan_branch_district_key",
+      "from": "fact_loan",
+      "to": "dim_district",
+      "label": "branch_district_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fact_loan_client_district_key",
+      "from": "fact_loan",
+      "to": "dim_district",
+      "label": "client_district_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fact_loan_data_origin_key",
+      "from": "fact_loan",
+      "to": "dim_data_origin",
+      "label": "data_origin_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "bridge_account_client_account_key",
+      "from": "bridge_account_client",
+      "to": "dim_account",
+      "label": "account_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "bridge_account_client_client_key",
+      "from": "bridge_account_client",
+      "to": "dim_client",
+      "label": "client_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Grain",
+      "items": [
+        "fact_transaction: one posted transaction.",
+        "fact_account_balance_daily: one account per day with activity.",
+        "fact_loan: one loan."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Reading the model",
+      "items": [
+        "dim_district is joined twice from each fact, as branch and as client home district.",
+        "Balances are semi-additive: use the last value in a period, never a sum.",
+        "date_key is the business date; the commit and load timestamps drive lag measures."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+"""Banking change-data-capture landing pipeline"""

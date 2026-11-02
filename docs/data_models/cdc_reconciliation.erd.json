@@ -1,0 +1,565 @@
+{
+  "schema_version": 1,
+  "diagram_type": "erd",
+  "meta": {
+    "title": "CDC replay and reconciliation control tables",
+    "subtitle": "What the simulator meant to change, what Debezium delivered, what loaded, and whether source and target agree by account and processing window.",
+    "locale": "en",
+    "output": "docs/html-diagrams/cdc_reconciliation.html",
+    "quality_profile": "standard"
+  },
+  "layout": {
+    "mode": "grid",
+    "gapX": 88,
+    "gapY": 40
+  },
+  "entities": [
+    {
+      "id": "replay_run",
+      "label": "replay_run",
+      "tag": "replay, in Postgres",
+      "row": 0,
+      "col": 0,
+      "attributes": [
+        {
+          "name": "replay_run_id",
+          "type": "bigint",
+          "key": "pk"
+        },
+        {
+          "name": "scenario",
+          "type": "varchar(64)"
+        },
+        {
+          "name": "random_seed",
+          "type": "bigint"
+        },
+        {
+          "name": "speed_factor",
+          "type": "numeric(10,2)"
+        },
+        {
+          "name": "started_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "ended_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "status",
+          "type": "varchar(16)"
+        }
+      ]
+    },
+    {
+      "id": "replay_event",
+      "label": "replay_event",
+      "tag": "replay, in Postgres",
+      "row": 1,
+      "col": 0,
+      "attributes": [
+        {
+          "name": "replay_event_id",
+          "type": "bigint",
+          "key": "pk"
+        },
+        {
+          "name": "replay_run_id",
+          "type": "bigint",
+          "key": "fk",
+          "references": "replay_run.replay_run_id"
+        },
+        {
+          "name": "source_table",
+          "type": "varchar(32)"
+        },
+        {
+          "name": "record_pk",
+          "type": "bigint"
+        },
+        {
+          "name": "operation",
+          "type": "char(1)"
+        },
+        {
+          "name": "data_origin",
+          "type": "varchar(16)"
+        },
+        {
+          "name": "business_date",
+          "type": "date"
+        },
+        {
+          "name": "amount",
+          "type": "numeric(12,2)"
+        },
+        {
+          "name": "intended_commit_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "actual_commit_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "injected_delay_seconds",
+          "type": "int"
+        },
+        {
+          "name": "injected_fault",
+          "type": "varchar(32)"
+        }
+      ],
+      "width": 251
+    },
+    {
+      "id": "cdc_event",
+      "label": "cdc_event",
+      "tag": "transport, in Bronze",
+      "row": 0,
+      "col": 1,
+      "attributes": [
+        {
+          "name": "cdc_event_id",
+          "type": "bigint",
+          "key": "pk"
+        },
+        {
+          "name": "topic",
+          "type": "varchar(128)"
+        },
+        {
+          "name": "kafka_partition",
+          "type": "int"
+        },
+        {
+          "name": "kafka_offset",
+          "type": "bigint"
+        },
+        {
+          "name": "replay_event_id",
+          "type": "bigint",
+          "key": "fk",
+          "references": "replay_event.replay_event_id"
+        },
+        {
+          "name": "source_table",
+          "type": "varchar(32)"
+        },
+        {
+          "name": "record_pk",
+          "type": "bigint"
+        },
+        {
+          "name": "operation",
+          "type": "char(1)"
+        },
+        {
+          "name": "source_lsn",
+          "type": "bigint"
+        },
+        {
+          "name": "source_committed_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "kafka_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "landed_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "landing_file",
+          "type": "varchar(512)"
+        },
+        {
+          "name": "load_batch_id",
+          "type": "bigint",
+          "key": "fk",
+          "references": "load_batch.load_batch_id"
+        },
+        {
+          "name": "before_payload",
+          "type": "variant"
+        },
+        {
+          "name": "after_payload",
+          "type": "variant"
+        }
+      ],
+      "width": 257
+    },
+    {
+      "id": "dead_letter_event",
+      "label": "dead_letter_event",
+      "tag": "transport, in Bronze",
+      "row": 1,
+      "col": 1,
+      "attributes": [
+        {
+          "name": "dead_letter_id",
+          "type": "bigint",
+          "key": "pk"
+        },
+        {
+          "name": "topic",
+          "type": "varchar(128)"
+        },
+        {
+          "name": "kafka_partition",
+          "type": "int"
+        },
+        {
+          "name": "kafka_offset",
+          "type": "bigint"
+        },
+        {
+          "name": "error_class",
+          "type": "varchar(64)"
+        },
+        {
+          "name": "error_message",
+          "type": "varchar(1024)"
+        },
+        {
+          "name": "retry_count",
+          "type": "int"
+        },
+        {
+          "name": "first_failed_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "resolved_at",
+          "type": "timestamptz"
+        }
+      ]
+    },
+    {
+      "id": "load_batch",
+      "label": "load_batch",
+      "tag": "load, in audit schema",
+      "row": 0,
+      "col": 2,
+      "attributes": [
+        {
+          "name": "load_batch_id",
+          "type": "bigint",
+          "key": "pk"
+        },
+        {
+          "name": "airflow_dag_id",
+          "type": "varchar(128)"
+        },
+        {
+          "name": "airflow_run_id",
+          "type": "varchar(128)"
+        },
+        {
+          "name": "target_table",
+          "type": "varchar(128)"
+        },
+        {
+          "name": "window_start",
+          "type": "timestamptz"
+        },
+        {
+          "name": "window_end",
+          "type": "timestamptz"
+        },
+        {
+          "name": "files_loaded",
+          "type": "int"
+        },
+        {
+          "name": "rows_loaded",
+          "type": "bigint"
+        },
+        {
+          "name": "rows_rejected",
+          "type": "bigint"
+        },
+        {
+          "name": "status",
+          "type": "varchar(16)"
+        },
+        {
+          "name": "error_message",
+          "type": "varchar(1024)"
+        },
+        {
+          "name": "started_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "finished_at",
+          "type": "timestamptz"
+        }
+      ]
+    },
+    {
+      "id": "recon_run",
+      "label": "recon_run",
+      "tag": "reconciliation, in audit schema",
+      "row": 0,
+      "col": 3,
+      "attributes": [
+        {
+          "name": "recon_run_id",
+          "type": "bigint",
+          "key": "pk"
+        },
+        {
+          "name": "window_start",
+          "type": "timestamptz"
+        },
+        {
+          "name": "window_end",
+          "type": "timestamptz"
+        },
+        {
+          "name": "amount_tolerance",
+          "type": "numeric(6,2)"
+        },
+        {
+          "name": "accounts_checked",
+          "type": "int"
+        },
+        {
+          "name": "accounts_mismatched",
+          "type": "int"
+        },
+        {
+          "name": "status",
+          "type": "varchar(16)"
+        },
+        {
+          "name": "started_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "finished_at",
+          "type": "timestamptz"
+        }
+      ],
+      "width": 244
+    },
+    {
+      "id": "recon_account_window",
+      "label": "recon_account_window",
+      "tag": "reconciliation, in audit schema",
+      "row": 1,
+      "col": 3,
+      "attributes": [
+        {
+          "name": "recon_run_id",
+          "type": "bigint",
+          "key": [
+            "pk",
+            "fk"
+          ],
+          "references": "recon_run.recon_run_id"
+        },
+        {
+          "name": "account_id",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "data_origin",
+          "type": "varchar(16)"
+        },
+        {
+          "name": "source_count",
+          "type": "bigint"
+        },
+        {
+          "name": "target_count",
+          "type": "bigint"
+        },
+        {
+          "name": "count_diff",
+          "type": "bigint"
+        },
+        {
+          "name": "source_amount",
+          "type": "numeric(18,2)"
+        },
+        {
+          "name": "target_amount",
+          "type": "numeric(18,2)"
+        },
+        {
+          "name": "amount_diff",
+          "type": "numeric(18,2)"
+        },
+        {
+          "name": "status",
+          "type": "varchar(16)"
+        }
+      ],
+      "width": 250
+    },
+    {
+      "id": "recon_exception",
+      "label": "recon_exception",
+      "tag": "reconciliation, in audit schema",
+      "row": 2,
+      "col": 3,
+      "attributes": [
+        {
+          "name": "recon_exception_id",
+          "type": "bigint",
+          "key": "pk"
+        },
+        {
+          "name": "recon_run_id",
+          "type": "bigint",
+          "key": "fk",
+          "references": "recon_run.recon_run_id"
+        },
+        {
+          "name": "account_id",
+          "type": "int"
+        },
+        {
+          "name": "exception_type",
+          "type": "varchar(32)"
+        },
+        {
+          "name": "cdc_event_id",
+          "type": "bigint",
+          "key": "fk",
+          "references": "cdc_event.cdc_event_id"
+        },
+        {
+          "name": "load_batch_id",
+          "type": "bigint",
+          "key": "fk",
+          "references": "load_batch.load_batch_id"
+        },
+        {
+          "name": "detail",
+          "type": "varchar(1024)"
+        },
+        {
+          "name": "detected_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "resolved_at",
+          "type": "timestamptz"
+        }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "replay_event_replay_run_id",
+      "from": "replay_event",
+      "to": "replay_run",
+      "label": "replay_run_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "cdc_event_replay_event_id",
+      "from": "cdc_event",
+      "to": "replay_event",
+      "label": "replay_event_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false,
+      "variant": "dashed"
+    },
+    {
+      "id": "cdc_event_load_batch_id",
+      "from": "cdc_event",
+      "to": "load_batch",
+      "label": "load_batch_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false,
+      "variant": "dashed"
+    },
+    {
+      "id": "recon_account_window_recon_run_id",
+      "from": "recon_account_window",
+      "to": "recon_run",
+      "label": "recon_run_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "recon_exception_recon_run_id",
+      "from": "recon_exception",
+      "to": "recon_run",
+      "label": "recon_run_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "recon_exception_cdc_event_id",
+      "from": "recon_exception",
+      "to": "cdc_event",
+      "label": "cdc_event_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false,
+      "variant": "dashed"
+    },
+    {
+      "id": "recon_exception_load_batch_id",
+      "from": "recon_exception",
+      "to": "load_batch",
+      "label": "load_batch_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false,
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "How each check works",
+      "items": [
+        "Mismatches: recon_account_window compares count and amount per account and window, using commit time as the window.",
+        "Duplicate CDC events: the same topic, partition and offset, or the same LSN and record key, loaded more than once.",
+        "Failed loads: load_batch rows with a failed status or rejected rows. Missing events: replay_event rows with no cdc_event.",
+        "Inserts and updates link through last_replay_event_id in the payload. A delete only carries the previous value, so deletes match on source_table, record_pk and operation d."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Lag and late events",
+      "items": [
+        "Lag per hop: source_committed_at to kafka_at to landed_at to warehouse load.",
+        "injected_delay_seconds makes late arrivals deliberate, so the test knows what to expect.",
+        "injected_fault does the same for duplicates and failures."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Scope",
+      "items": [
+        "Exclude replay_run and replay_event from the Debezium table list. Airflow copies them to the audit schema in batches, so the expected changes travel separately from the pipeline being tested.",
+        "The initial snapshot arrives with operation r and is not counted as a simulated change."
+      ]
+    }
+  ]
+}

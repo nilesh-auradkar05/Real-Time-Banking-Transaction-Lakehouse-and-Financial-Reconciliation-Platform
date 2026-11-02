@@ -1,0 +1,250 @@
+{
+  "schema_version": 1,
+  "diagram_type": "erd",
+  "meta": {
+    "title": "PaySim fraud workload",
+    "subtitle": "A separate synthetic mobile-money workload. It shares no keys, customers, dates or currency with the Czech model.",
+    "locale": "en",
+    "output": "docs/html-diagrams/paysim.html",
+    "quality_profile": "showcase"
+  },
+  "layout": {
+    "mode": "grid",
+    "gapX": 88,
+    "gapY": 40
+  },
+  "entities": [
+    {
+      "id": "paysim_raw",
+      "label": "paysim_raw",
+      "tag": "Bronze",
+      "row": 0,
+      "col": 0,
+      "attributes": [
+        {
+          "name": "source_row_number",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "step",
+          "type": "smallint"
+        },
+        {
+          "name": "type",
+          "type": "varchar(8)"
+        },
+        {
+          "name": "amount",
+          "type": "numeric(14,2)"
+        },
+        {
+          "name": "nameOrig",
+          "type": "varchar(12)"
+        },
+        {
+          "name": "oldbalanceOrg",
+          "type": "numeric(14,2)"
+        },
+        {
+          "name": "newbalanceOrig",
+          "type": "numeric(14,2)"
+        },
+        {
+          "name": "nameDest",
+          "type": "varchar(12)"
+        },
+        {
+          "name": "oldbalanceDest",
+          "type": "numeric(14,2)"
+        },
+        {
+          "name": "newbalanceDest",
+          "type": "numeric(14,2)"
+        },
+        {
+          "name": "isFraud",
+          "type": "smallint"
+        },
+        {
+          "name": "isFlaggedFraud",
+          "type": "smallint"
+        },
+        {
+          "name": "source_file",
+          "type": "varchar(255)"
+        },
+        {
+          "name": "loaded_at",
+          "type": "timestamptz"
+        }
+      ]
+    },
+    {
+      "id": "fact_mobile_transaction",
+      "label": "fact_mobile_transaction",
+      "tag": "Gold fact",
+      "row": 0,
+      "col": 1,
+      "attributes": [
+        {
+          "name": "mobile_transaction_id",
+          "type": "bigint",
+          "key": "pk"
+        },
+        {
+          "name": "step_key",
+          "type": "smallint",
+          "key": "fk",
+          "references": "dim_sim_step.step_key"
+        },
+        {
+          "name": "transaction_type_key",
+          "type": "smallint",
+          "key": "fk",
+          "references": "dim_mobile_transaction_type.transaction_type_key"
+        },
+        {
+          "name": "origin_party_code",
+          "type": "varchar(12)"
+        },
+        {
+          "name": "destination_party_code",
+          "type": "varchar(12)"
+        },
+        {
+          "name": "is_merchant_destination",
+          "type": "boolean"
+        },
+        {
+          "name": "amount",
+          "type": "numeric(14,2)"
+        },
+        {
+          "name": "origin_balance_before",
+          "type": "numeric(14,2)"
+        },
+        {
+          "name": "origin_balance_after",
+          "type": "numeric(14,2)"
+        },
+        {
+          "name": "destination_balance_before",
+          "type": "numeric(14,2)"
+        },
+        {
+          "name": "destination_balance_after",
+          "type": "numeric(14,2)"
+        },
+        {
+          "name": "is_fraud",
+          "type": "boolean"
+        },
+        {
+          "name": "is_flagged_fraud",
+          "type": "boolean"
+        }
+      ],
+      "width": 316
+    },
+    {
+      "id": "dim_sim_step",
+      "label": "dim_sim_step",
+      "tag": "Gold dimensions",
+      "row": 0,
+      "col": 2,
+      "attributes": [
+        {
+          "name": "step_key",
+          "type": "smallint",
+          "key": "pk"
+        },
+        {
+          "name": "simulation_day",
+          "type": "smallint"
+        },
+        {
+          "name": "hour_of_day",
+          "type": "smallint"
+        }
+      ]
+    },
+    {
+      "id": "dim_mobile_transaction_type",
+      "label": "dim_mobile_transaction_type",
+      "tag": "Gold dimensions",
+      "row": 1,
+      "col": 2,
+      "attributes": [
+        {
+          "name": "transaction_type_key",
+          "type": "smallint",
+          "key": "pk"
+        },
+        {
+          "name": "type_code",
+          "type": "varchar(8)",
+          "key": "uk"
+        },
+        {
+          "name": "type_name",
+          "type": "varchar(16)"
+        },
+        {
+          "name": "can_be_fraud",
+          "type": "boolean"
+        }
+      ],
+      "width": 245
+    }
+  ],
+  "relationships": [
+    {
+      "id": "fact_mobile_transaction_step_key",
+      "from": "fact_mobile_transaction",
+      "to": "dim_sim_step",
+      "label": "step_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fact_mobile_transaction_transaction_type_key",
+      "from": "fact_mobile_transaction",
+      "to": "dim_mobile_transaction_type",
+      "label": "transaction_type_key",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "Profiled facts",
+      "items": [
+        "6,362,620 rows, 0 nulls, 743 hourly steps.",
+        "8,213 fraud rows (0.13%), only in TRANSFER and CASH_OUT. 16 rows are flagged, all of them fraud.",
+        "The source has no transaction ID, but step + type + origin + destination + amount is unique."
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Modelling limits",
+      "items": [
+        "Kaggle warns against using the balance columns for fraud detection: they are annulled when fraud is cancelled. Keep them in the fact, and exclude them from fraud features.",
+        "Parties are columns, not a dimension. There are 9,073,900 distinct codes and no attributes beyond the C or M prefix.",
+        "Merchant destinations have no balance data: both destination balances are 0 on all 2,151,495 rows."
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Why it stays separate",
+      "items": [
+        "step is an hour offset with no calendar date, so it cannot join dim_date.",
+        "amount is in an unnamed local currency and cannot be compared with Czech amounts.",
+        "Everything here is synthetic, which the schema name states, so no data_origin column is needed."
+      ]
+    }
+  ]
+}

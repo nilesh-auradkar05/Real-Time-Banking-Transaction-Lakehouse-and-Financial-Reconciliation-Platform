@@ -1,0 +1,805 @@
+{
+  "schema_version": 1,
+  "diagram_type": "erd",
+  "meta": {
+    "title": "Czech banking: PostgreSQL source schema",
+    "subtitle": "System of record for CDC. The 8 dataset tables, plus labels showing where each row came from and which replay event last touched it.",
+    "locale": "en",
+    "output": "docs/html-diagrams/czech_oltp.html",
+    "quality_profile": "standard"
+  },
+  "layout": {
+    "mode": "grid",
+    "gapX": 88,
+    "gapY": 40
+  },
+  "entities": [
+    {
+      "id": "fin_district",
+      "label": "fin_district",
+      "tag": "reference",
+      "row": 0,
+      "col": 0,
+      "attributes": [
+        {
+          "name": "district_id",
+          "type": "smallint",
+          "key": "pk"
+        },
+        {
+          "name": "district_name",
+          "type": "varchar(19)",
+          "key": "uk"
+        },
+        {
+          "name": "region",
+          "type": "varchar(15)"
+        },
+        {
+          "name": "num_inhabitants",
+          "type": "int"
+        },
+        {
+          "name": "num_municipalities_gt499",
+          "type": "smallint"
+        },
+        {
+          "name": "num_municipalities_500to1999",
+          "type": "smallint"
+        },
+        {
+          "name": "num_municipalities_2000to9999",
+          "type": "smallint"
+        },
+        {
+          "name": "num_municipalities_gt10000",
+          "type": "smallint"
+        },
+        {
+          "name": "num_cities",
+          "type": "smallint"
+        },
+        {
+          "name": "ratio_urban",
+          "type": "numeric(4,1)"
+        },
+        {
+          "name": "average_salary",
+          "type": "numeric(10,2)"
+        },
+        {
+          "name": "unemployment_rate95",
+          "type": "numeric(3,2)"
+        },
+        {
+          "name": "unemployment_rate96",
+          "type": "numeric(3,2)"
+        },
+        {
+          "name": "num_entrep_per1000",
+          "type": "smallint"
+        },
+        {
+          "name": "num_crimes95",
+          "type": "int"
+        },
+        {
+          "name": "num_crimes96",
+          "type": "int"
+        }
+      ],
+      "width": 304
+    },
+    {
+      "id": "fin_client",
+      "label": "fin_client",
+      "tag": "customers",
+      "row": 0,
+      "col": 1,
+      "attributes": [
+        {
+          "name": "client_id",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "birth_date",
+          "type": "date"
+        },
+        {
+          "name": "gender",
+          "type": "char(1)"
+        },
+        {
+          "name": "district_id",
+          "type": "smallint",
+          "key": "fk",
+          "references": "fin_district.district_id"
+        },
+        {
+          "name": "synthetic_batch_id",
+          "type": "int",
+          "key": "fk",
+          "references": "synthetic_batch.synthetic_batch_id"
+        },
+        {
+          "name": "data_origin",
+          "type": "varchar(16)"
+        },
+        {
+          "name": "last_replay_event_id",
+          "type": "bigint",
+          "key": "fk",
+          "references": "replay_event.replay_event_id"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamptz"
+        }
+      ]
+    },
+    {
+      "id": "fin_disp",
+      "label": "fin_disp",
+      "tag": "customers",
+      "row": 1,
+      "col": 1,
+      "attributes": [
+        {
+          "name": "disp_id",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "client_id",
+          "type": "int",
+          "key": "fk",
+          "references": "fin_client.client_id"
+        },
+        {
+          "name": "account_id",
+          "type": "int",
+          "key": "fk",
+          "references": "fin_account.account_id"
+        },
+        {
+          "name": "disp_type",
+          "type": "char(1)"
+        },
+        {
+          "name": "synthetic_batch_id",
+          "type": "int",
+          "key": "fk",
+          "references": "synthetic_batch.synthetic_batch_id"
+        },
+        {
+          "name": "data_origin",
+          "type": "varchar(16)"
+        },
+        {
+          "name": "last_replay_event_id",
+          "type": "bigint",
+          "key": "fk",
+          "references": "replay_event.replay_event_id"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamptz"
+        }
+      ]
+    },
+    {
+      "id": "fin_card",
+      "label": "fin_card",
+      "tag": "customers",
+      "row": 2,
+      "col": 1,
+      "attributes": [
+        {
+          "name": "card_id",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "disp_id",
+          "type": "int",
+          "key": "fk",
+          "references": "fin_disp.disp_id"
+        },
+        {
+          "name": "card_type",
+          "type": "char(1)"
+        },
+        {
+          "name": "issued_date",
+          "type": "date"
+        },
+        {
+          "name": "data_origin",
+          "type": "varchar(16)"
+        },
+        {
+          "name": "last_replay_event_id",
+          "type": "bigint",
+          "key": "fk",
+          "references": "replay_event.replay_event_id"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamptz"
+        }
+      ]
+    },
+    {
+      "id": "fin_account",
+      "label": "fin_account",
+      "tag": "accounts",
+      "row": 0,
+      "col": 2,
+      "attributes": [
+        {
+          "name": "account_id",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "district_id",
+          "type": "smallint",
+          "key": "fk",
+          "references": "fin_district.district_id"
+        },
+        {
+          "name": "create_date",
+          "type": "date"
+        },
+        {
+          "name": "frequency",
+          "type": "char(1)"
+        },
+        {
+          "name": "synthetic_batch_id",
+          "type": "int",
+          "key": "fk",
+          "references": "synthetic_batch.synthetic_batch_id"
+        },
+        {
+          "name": "data_origin",
+          "type": "varchar(16)"
+        },
+        {
+          "name": "last_replay_event_id",
+          "type": "bigint",
+          "key": "fk",
+          "references": "replay_event.replay_event_id"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamptz"
+        }
+      ]
+    },
+    {
+      "id": "fin_loan",
+      "label": "fin_loan",
+      "tag": "accounts",
+      "row": 1,
+      "col": 2,
+      "attributes": [
+        {
+          "name": "loan_id",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "account_id",
+          "type": "int",
+          "key": [
+            "uk",
+            "fk"
+          ],
+          "references": "fin_account.account_id"
+        },
+        {
+          "name": "granted_date",
+          "type": "date"
+        },
+        {
+          "name": "amount",
+          "type": "numeric(12,2)"
+        },
+        {
+          "name": "duration",
+          "type": "smallint"
+        },
+        {
+          "name": "payments",
+          "type": "numeric(12,2)"
+        },
+        {
+          "name": "status",
+          "type": "char(1)"
+        },
+        {
+          "name": "data_origin",
+          "type": "varchar(16)"
+        },
+        {
+          "name": "last_replay_event_id",
+          "type": "bigint",
+          "key": "fk",
+          "references": "replay_event.replay_event_id"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamptz"
+        }
+      ],
+      "width": 252
+    },
+    {
+      "id": "fin_order",
+      "label": "fin_order",
+      "tag": "accounts",
+      "row": 2,
+      "col": 2,
+      "attributes": [
+        {
+          "name": "order_id",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "account_id",
+          "type": "int",
+          "key": "fk",
+          "references": "fin_account.account_id"
+        },
+        {
+          "name": "bank_to",
+          "type": "char(2)"
+        },
+        {
+          "name": "account_to",
+          "type": "int"
+        },
+        {
+          "name": "amount",
+          "type": "numeric(12,2)"
+        },
+        {
+          "name": "category",
+          "type": "char(2)"
+        },
+        {
+          "name": "data_origin",
+          "type": "varchar(16)"
+        },
+        {
+          "name": "last_replay_event_id",
+          "type": "bigint",
+          "key": "fk",
+          "references": "replay_event.replay_event_id"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamptz"
+        }
+      ]
+    },
+    {
+      "id": "fin_trans",
+      "label": "fin_trans",
+      "tag": "ledger",
+      "row": 0,
+      "col": 3,
+      "attributes": [
+        {
+          "name": "trans_id",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "account_id",
+          "type": "int",
+          "key": "fk",
+          "references": "fin_account.account_id"
+        },
+        {
+          "name": "trans_date",
+          "type": "date"
+        },
+        {
+          "name": "amount",
+          "type": "numeric(12,2)"
+        },
+        {
+          "name": "balance",
+          "type": "numeric(12,2)"
+        },
+        {
+          "name": "trans_type",
+          "type": "char(1)"
+        },
+        {
+          "name": "operation",
+          "type": "char(3)"
+        },
+        {
+          "name": "category",
+          "type": "char(2)"
+        },
+        {
+          "name": "other_bank_id",
+          "type": "char(2)"
+        },
+        {
+          "name": "other_account_id",
+          "type": "int"
+        },
+        {
+          "name": "recorded_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "synthetic_batch_id",
+          "type": "int",
+          "key": "fk",
+          "references": "synthetic_batch.synthetic_batch_id"
+        },
+        {
+          "name": "data_origin",
+          "type": "varchar(16)"
+        },
+        {
+          "name": "last_replay_event_id",
+          "type": "bigint",
+          "key": "fk",
+          "references": "replay_event.replay_event_id"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamptz"
+        }
+      ]
+    },
+    {
+      "id": "synthetic_batch",
+      "label": "synthetic_batch",
+      "tag": "control tables (other models)",
+      "row": 0,
+      "col": 4,
+      "attributes": [
+        {
+          "name": "synthetic_batch_id",
+          "type": "int",
+          "key": "pk"
+        },
+        {
+          "name": "generator_version",
+          "type": "varchar(32)"
+        },
+        {
+          "name": "faker_version",
+          "type": "varchar(16)"
+        },
+        {
+          "name": "random_seed",
+          "type": "bigint"
+        },
+        {
+          "name": "locale",
+          "type": "varchar(8)"
+        },
+        {
+          "name": "clients_created",
+          "type": "int"
+        },
+        {
+          "name": "accounts_created",
+          "type": "int"
+        },
+        {
+          "name": "transactions_created",
+          "type": "int"
+        },
+        {
+          "name": "business_date_from",
+          "type": "date"
+        },
+        {
+          "name": "business_date_to",
+          "type": "date"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamptz"
+        }
+      ],
+      "width": 244
+    },
+    {
+      "id": "replay_event",
+      "label": "replay_event",
+      "tag": "control tables (other models)",
+      "row": 1,
+      "col": 4,
+      "attributes": [
+        {
+          "name": "replay_event_id",
+          "type": "bigint",
+          "key": "pk"
+        },
+        {
+          "name": "replay_run_id",
+          "type": "bigint"
+        },
+        {
+          "name": "source_table",
+          "type": "varchar(32)"
+        },
+        {
+          "name": "record_pk",
+          "type": "bigint"
+        },
+        {
+          "name": "operation",
+          "type": "char(1)"
+        },
+        {
+          "name": "data_origin",
+          "type": "varchar(16)"
+        },
+        {
+          "name": "business_date",
+          "type": "date"
+        },
+        {
+          "name": "amount",
+          "type": "numeric(12,2)"
+        },
+        {
+          "name": "intended_commit_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "actual_commit_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "injected_delay_seconds",
+          "type": "int"
+        },
+        {
+          "name": "injected_fault",
+          "type": "varchar(32)"
+        }
+      ],
+      "width": 251
+    }
+  ],
+  "relationships": [
+    {
+      "id": "fin_client_district_id",
+      "from": "fin_client",
+      "to": "fin_district",
+      "label": "district_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fin_client_synthetic_batch_id",
+      "from": "fin_client",
+      "to": "synthetic_batch",
+      "label": "synthetic_batch_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false,
+      "variant": "dashed"
+    },
+    {
+      "id": "fin_client_last_replay_event_id",
+      "from": "fin_client",
+      "to": "replay_event",
+      "label": "last_replay_event_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false,
+      "variant": "dashed"
+    },
+    {
+      "id": "fin_disp_client_id",
+      "from": "fin_disp",
+      "to": "fin_client",
+      "label": "client_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fin_disp_account_id",
+      "from": "fin_disp",
+      "to": "fin_account",
+      "label": "account_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fin_disp_synthetic_batch_id",
+      "from": "fin_disp",
+      "to": "synthetic_batch",
+      "label": "synthetic_batch_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false,
+      "variant": "dashed"
+    },
+    {
+      "id": "fin_disp_last_replay_event_id",
+      "from": "fin_disp",
+      "to": "replay_event",
+      "label": "last_replay_event_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false,
+      "variant": "dashed"
+    },
+    {
+      "id": "fin_card_disp_id",
+      "from": "fin_card",
+      "to": "fin_disp",
+      "label": "disp_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fin_card_last_replay_event_id",
+      "from": "fin_card",
+      "to": "replay_event",
+      "label": "last_replay_event_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false,
+      "variant": "dashed"
+    },
+    {
+      "id": "fin_account_district_id",
+      "from": "fin_account",
+      "to": "fin_district",
+      "label": "district_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fin_account_synthetic_batch_id",
+      "from": "fin_account",
+      "to": "synthetic_batch",
+      "label": "synthetic_batch_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false,
+      "variant": "dashed"
+    },
+    {
+      "id": "fin_account_last_replay_event_id",
+      "from": "fin_account",
+      "to": "replay_event",
+      "label": "last_replay_event_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false,
+      "variant": "dashed"
+    },
+    {
+      "id": "fin_loan_account_id",
+      "from": "fin_loan",
+      "to": "fin_account",
+      "label": "account_id",
+      "fromCardinality": "one",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fin_loan_last_replay_event_id",
+      "from": "fin_loan",
+      "to": "replay_event",
+      "label": "last_replay_event_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false,
+      "variant": "dashed"
+    },
+    {
+      "id": "fin_order_account_id",
+      "from": "fin_order",
+      "to": "fin_account",
+      "label": "account_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fin_order_last_replay_event_id",
+      "from": "fin_order",
+      "to": "replay_event",
+      "label": "last_replay_event_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false,
+      "variant": "dashed"
+    },
+    {
+      "id": "fin_trans_account_id",
+      "from": "fin_trans",
+      "to": "fin_account",
+      "label": "account_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true
+    },
+    {
+      "id": "fin_trans_synthetic_batch_id",
+      "from": "fin_trans",
+      "to": "synthetic_batch",
+      "label": "synthetic_batch_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false,
+      "variant": "dashed"
+    },
+    {
+      "id": "fin_trans_last_replay_event_id",
+      "from": "fin_trans",
+      "to": "replay_event",
+      "label": "last_replay_event_id",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false,
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Postgres setup",
+      "items": [
+        "Add real primary keys. The Teradata script only sets a non-unique primary index on fin_loan, fin_order and fin_trans, and Debezium needs a key. All three IDs are unique in the data.",
+        "Enforce the foreign keys; there are 0 orphans in the data.",
+        "Set REPLICA IDENTITY FULL so updates and deletes capture the before-image."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Two clocks",
+      "items": [
+        "trans_date is the business date from the source, with no time of day.",
+        "recorded_at and the Debezium commit time are when the row actually reached Postgres."
+      ]
+    }
+  ]
+}
