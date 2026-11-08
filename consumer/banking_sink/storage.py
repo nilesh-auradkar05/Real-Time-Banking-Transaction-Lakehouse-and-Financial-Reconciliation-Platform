@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
+import base64
 import re
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -40,10 +42,14 @@ SCHEMA = pa.schema([
     pa.field("source_json", pa.string()),
     pa.field("payload_json", pa.string()),
     pa.field("ingested_at", pa.timestamp("us", tz="UTC")),
+    pa.field("record_pk", pa.int64()),
+    pa.field("replay_event_id", pa.int64()),
+    pa.field("data_origin", pa.string()),
+    pa.field("synthetic_batch_id", pa.int64()),
 ])
 
 def _safe_segment(value: str) -> str:
-    """Prevent accidental path traversal through dynamic table/topic names"""
+    """Prevent accidental path traversal through dynamic topic/table names"""
     return re.sub(r"[^A-Za-z0-9_.-]", "_", value).replace("..", "__")
 
 class ParquetS3Writer:
@@ -68,11 +74,13 @@ class ParquetS3Writer:
 
         # offsets must strictly increase within a partition
         offsets = [e.kafka_offset for e in events]
-        if offsets != sorted(offsets):
+        if offsets != sorted(set(offsets)):
             raise ValueError("Offsets must be strictly increasing within a batch")
 
         table = _safe_segment(events[0].source_table)
-        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        # Use transport timestamp (stable across consumer restarts) for deterministic partitioning.
+        stamp = events[0].kafka_timestamp_ms or events[0].event_ts_ms
+        day = (datetime.fromtimestamp(stamp / 1000, timezone.utc) if stamp is not None else events[0].ingested_at.strftime("%Y-%m-%d"))
         start, end = offsets[0], offsets[-1]
         path = (
             f"table={table}/ingest_date={day}/"
@@ -106,7 +114,7 @@ class ParquetS3Writer:
             )
         except ClientError as exc:
             code = exc.response.get("Error", {}).get("Code", "")
-            status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", "")
+            status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
             if status != 412 and code not in {"PreconditionFailed", "412"}:
                 raise
             # Existing batch is only a success when it has the same kafka event ids.
@@ -120,3 +128,38 @@ class ParquetS3Writer:
             f"Landed {len(events)} events ({topic} [{partition}] offsets {start}..{end}, {len(body)}) at s3://{self.settings.s3_bucket}/{key})"
         )
         return key
+
+    def put_failure(self, *, topic: str, partition: int, offset: int,
+                    kafka_timestamp_ms: int | None, key: bytes | None,
+                    value: bytes | None, error: Exception) -> str:
+        """Durable quarantine before advancing a poison message's Kafka offset.
+
+        Writes the original bytes to restricted S3. Dead-letter objects may include PII.
+        Replays must be performed explicitly; do not treat quarantined events as landed.
+        """
+        now = datetime.now(timezone.utc)
+        s3_key = (f"{self.settings.dlq_prefix}/topic={_safe_segment(topic)}/"
+                  f"partition={partition}/offset={offset:020d}.json")
+        doc = {
+            "topic": topic, "kafka_partition": partition, "kafka_offset": offset,
+            "kafka_timestamp_ms": kafka_timestamp_ms,
+            "event_id": f"{topic}:{partition}:{offset}",
+            "error_class": type(error).__name__, "error_message": str(error)[:1024],
+            "retry_count": 0, "first_failed_at": now.isoformat(), "resolved_at": None,
+            "key_base64": base64.b64encode(key).decode() if key is not None else None,
+            "value_base64": base64.b64encode(value).decode() if value is not None else None,
+        }
+        body = json.dumps(doc, sort_keys=True).encode()
+        try:
+            self.s3.put_object(Bucket=self.settings.s3_bucket, Key=s3_key, Body=body,
+                               ContentType="application/json", IfNoneMatch="*")
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            if code != "PreconditionFailed" and status != 412:
+                raise
+            # Key exists, proving that a durable quarantine already happened.
+            self.s3.head_object(Bucket=self.settings.s3_bucket, Key=s3_key)
+        logger.error("Quarantined invalid CDC event %s [%s] %s to s3://%s/%s",
+                  topic, partition, offset, self.settings.s3_bucket, s3_key)
+        return s3_key

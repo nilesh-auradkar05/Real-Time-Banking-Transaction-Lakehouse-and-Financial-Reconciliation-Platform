@@ -87,14 +87,36 @@ class KafkaS3Sink:
                     if message.error():
                         raise KafkaException(message.error())
                     timestamp_kind, timestamp_ms = message.timestamp()
-                    event = parse_event(
-                        topic=message.topic(),
-                        partition=message.partition(),
-                        offset=message.offset(),
-                        kafka_timestamp_ms=timestamp_ms if timestamp_kind > 0 else None,
-                        key=message.key(),
-                        value=message.value(),
-                    )
+                    
+                    try:
+                        event = parse_event(
+                            topic=message.topic(), partition=message.partition(),
+                            offset=message.offset(),
+                            kafka_timestamp_ms=timestamp_ms if timestamp_kind > 0 else None,
+                            key=message.key(), value=message.value(),
+                        )
+                    except ValueError as exc:
+                        if self.settings.malformed_event_policy == "fail":
+                            raise
+                        # Preserve ordering: first persist and commit all earlier events.
+                        tp = (message.topic(), message.partition())
+                        self._flush_partition(tp)
+                        # If quarantine fails, do not commit. Never silently drop data.
+                        self.writer.put_failure(
+                            topic=message.topic(), partition=message.partition(),
+                            offset=message.offset(),
+                            kafka_timestamp_ms=timestamp_ms if timestamp_kind > 0 else None,
+                            key=message.key(), value=message.value(), error=exc,
+                        )
+                        result = self.consumer.commit(
+                            offsets=[TopicPartition(tp[0], tp[1], message.offset() + 1)],
+                            asynchronous=False,
+                        )
+                        for part in result or []:
+                            if part.error is not None:
+                                raise KafkaException(part.error)
+                        logger.warning("Quarantined and committed invalid event %s:%d:%d", *tp, message.offset())
+                        continue
                     tp = (event.topic, event.kafka_partition)
                     self.buffers[tp].append(event)
                     if len(self.buffers[tp]) >= self.settings.batch_size:

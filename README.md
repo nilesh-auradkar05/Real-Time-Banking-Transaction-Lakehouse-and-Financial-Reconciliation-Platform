@@ -14,19 +14,6 @@ The current implementation reaches **Parquet landing in S3**. Snowflake ingestio
 
 **Explore:** [What gets built](#what-gets-built) · [Source data](#source-data) · [Data model diagrams](#data-model-diagrams) · [The pipeline](#the-pipeline) · [Financial reconciliation](#financial-reconciliation) · [Setup](#setup) · [Tests](#tests) · [Known gaps](#known-gaps)
 
-## What gets built
-
-| Layer | Responsibility | Status in this repository |
-|---|---|---|
-| **Source** | Eight Czech banking tables, labelled synthetic records, replay runs and expected events | PostgreSQL DDL and Python loader/replay implemented |
-| **CDC** | Capture snapshots and WAL changes as Debezium JSON records | PostgreSQL connector and Kafka infrastructure configured |
-| **Lake landing** | Preserve change envelopes and transport metadata in partitioned Parquet | Python Kafka-to-S3 consumer implemented |
-| **Bronze** | Load raw CDC and track files, events and load batches in Snowflake | Audit model defined; warehouse ingestion pending |
-| **Silver** | Standardize source fields, deduplicate events, apply changes and track dimension history | Transformation rules documented; dbt models pending |
-| **Gold** | Transaction ledger, daily account balances, loan portfolio and Customer 360 | Fact constellation designed; marts pending |
-| **Reconciliation** | Compare expected events, delivered records, counts, amounts and balances | Source replay audit implemented; downstream checks modelled |
-| **Orchestration and BI** | Schedule warehouse loads and dbt builds; expose analytics in Power BI | Airflow container definitions present; DAGs and dashboards pending |
-
 ## Tech stack
 
 **Implemented path:** Python 3.12+ · uv · PostgreSQL 15 · Faker · Debezium 2.2 / Kafka Connect · Apache Kafka · confluent-kafka · PyArrow · Boto3 · Amazon S3 · Docker Compose · pytest
@@ -339,7 +326,7 @@ uv run python3 -m consumer.banking_sink
 
 Use the dotted module name with `-m` so Python resolves the package's relative imports. The sink checks bucket access before subscribing; it does not create the bucket.
 
-To run the sink **inside Docker instead**, change `KAFKA_BOOTSTRAP_SERVERS` in `consumer/.env` to `kafka:9092`, provide AWS credentials to that runtime, then run:
+To run the sink **inside Docker instead**, provide AWS credentials to that runtime, then run the command below. Compose overrides `KAFKA_BOOTSTRAP_SERVERS` with `kafka:9092`; keep `localhost:29092` in `consumer/.env` for host execution.
 
 ```bash
 docker compose up -d --build kafka-s3-sink
@@ -399,6 +386,7 @@ The self-check refuses the Compose database port `5434` and any database with ex
 | `HeadBucket` returns `404` | Verify the bucket name, endpoint and access. For AWS, clear bucket-specific URLs from `S3_ENDPOINT_URL`; the status alone does not prove which condition failed |
 | `UNKNOWN_TOPIC_OR_PART` | Check connector/task status and list topics. The pattern must include `banking_server.public.fin_`, and at least one matching data topic must exist |
 | Kafka connects to the wrong listener | Use `localhost:29092` on the host and `kafka:9092` in Docker |
+| `Failed to resolve 'kafka:9092'` | Check `docker compose ps kafka` and start the broker with `docker compose up -d kafka`. The sink depends on the Kafka service; both must share the Compose network |
 | `Schema problem ... lacks columns` | The database has incompatible existing tables. The loader validates schema but does not run migrations |
 | Environment edits do not affect a running Docker sink | Recreate it with `docker compose up -d --force-recreate kafka-s3-sink` |
 

@@ -1,4 +1,5 @@
 """Parse JSON-serialized Debezium records without assuming row schemas"""
+from __future__ import annotations
 
 import json
 from dataclasses import dataclass
@@ -39,7 +40,7 @@ class CDCEvent:
     kafka_timestamp_ms: int | None
     source_database: str | None
     source_schema: str | None
-    source_table: str | None
+    source_table: str
     op: str
     event_ts_ms: int | None
     debezium_ts_ms: int | None
@@ -52,6 +53,10 @@ class CDCEvent:
     source_json: str | None
     payload_json: str | None
     ingested_at: datetime
+    record_pk: int | None = None
+    replay_event_id: int | None = None
+    data_origin: str | None = None
+    synthetic_batch_id: int | None = None
 
 def parse_event(
     *, topic: str, partition: int, offset: int,
@@ -64,7 +69,7 @@ def parse_event(
     """
 
     key_obj = _unwrap(_parse_json(key, "key"))
-    raw_value = _unwrap(_parse_json(value, "value"))
+    raw_value = _parse_json(value, "value")
     payload = _unwrap(raw_value)
     if value is not None and not isinstance(payload, dict):
         raise ValueError("Debezium value must be a JSON object or tombstone")
@@ -83,6 +88,17 @@ def parse_event(
             raise ValueError("Debezium source must be an object")
 
     source_table = str(source.get("table") or topic.rsplit(".", 1)[1])
+    row = ((payload.get('after') or payload.get("before")) if value is not None else None) or {}
+    if not isinstance(row, dict):
+        raise ValueError("Debezium row image must be a JSON object")
+    pk_map = {"fin_account": "account_id", "fin_client": "client_id", "fin_disp": "disp_id",
+              "fin_card": "card_id", "fin_district": "district_id", "fin_loan": "loan_id",
+              "fin_order": "order_id", "fin_trans": "trans_id", "replay_event": "replay_event_id"}
+    pk_field = pk_map.get(source_table)
+    record_pk = (row.get(pk_field) if pk_field else None)
+    if record_pk is None and isinstance(key_obj, dict) and pk_field:
+        record_pk = key_obj.get(pk_field)
+    
     snapshot = source.get("snapshot")
     if snapshot is not None:
         snapshot = str(snapshot).lower()
@@ -107,4 +123,9 @@ def parse_event(
         source_json=_json(source) if value is not None else None,
         payload_json=_json(payload) if value is not None else None,
         ingested_at=datetime.now(timezone.utc),
+        record_pk=_int_or_none(record_pk),
+        replay_event_id=_int_or_none(row.get("last_replay_event_id") or 
+        (row.get("replay_event_id") if source_table == "replay_event" else None)),
+        data_origin=str(row["data_origin"]) if row.get("data_origin") is not None else None,
+        synthetic_batch_id=_int_or_none(row.get("synthetic_batch_id")),
     )

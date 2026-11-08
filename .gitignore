@@ -13,6 +13,11 @@ wheels/
 .python-version
 .env
 kafka-debezium/.env
+Master_Bullet_Bank_2026-11-02-2.md
 
 # Folders
 dataset/
+.dbt/
+kafka-backup/
+logs/
+plugins/

@@ -1,0 +1,59 @@
+version: 2
+models:
+  - name: dim_account
+    columns:
+      - name: account_key
+        data_tests: [unique, not_null]
+  - name: dim_client
+    columns:
+      - name: client_key
+        data_tests: [unique, not_null]
+  - name: dim_loan
+    columns:
+      - name: loan_key
+        data_tests: [unique, not_null]
+  - name: dim_date
+    columns:
+      - name: date_key
+        data_tests: [unique, not_null]
+  - name: dim_data_origin
+    columns:
+      - name: data_origin_key
+        data_tests: [unique, not_null]
+  - name: dim_district
+    columns:
+      - name: district_key
+        data_tests: [unique, not_null]
+  - name: bridge_account_client
+    columns:
+      - name: disp_id
+        data_tests: [unique, not_null]
+  - name: fact_transaction
+    columns:
+      - name: transaction_id
+        data_tests: [unique, not_null]
+      - name: data_origin_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_data_origin')
+              field: data_origin_key
+      - name: account_key
+        data_tests:
+          - relationships:
+              to: ref('dim_account')
+              field: account_key
+  - name: fact_account_balance_daily
+    columns:
+      - name: account_key
+        data_tests: [not_null]
+      - name: business_date
+        data_tests: [not_null]
+  - name: fact_loan
+    columns:
+      - name: source_loan_id
+        data_tests: [unique, not_null]
+  - name: mart_customer_360
+    columns:
+      - name: client_key
+        data_tests: [unique, not_null]

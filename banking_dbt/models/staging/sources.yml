@@ -1,0 +1,14 @@
+version: 2
+sources:
+  - name: raw
+    database: BANKING_LAKEHOUSE
+    schema: RAW
+    tables:
+      - name: cdc_events
+        identifier: CDC_EVENTS
+models:
+  - name: stg_cdc_events
+    description: Deduplicated transport envelopes (one row per kafka topic/partition/offset).
+    columns:
+      - name: event_id
+        data_tests: [not_null, unique]

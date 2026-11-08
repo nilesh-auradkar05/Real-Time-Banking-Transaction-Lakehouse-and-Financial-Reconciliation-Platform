@@ -1,0 +1,45 @@
+USE WAREHOUSE BANKING_ETL_WH;
+USE DATABASE BANKING_LAKEHOUSE;
+
+COPY INTO RAW.CDC_EVENTS (
+    EVENT_ID, TOPIC, KAFKA_PARTITION, KAFKA_OFFSET, KAFKA_TIMESTAMP_MS,
+    SOURCE_DATABASE, SOURCE_SCHEMA, SOURCE_TABLE, OP,
+    RECORD_PK, REPLAY_EVENT_ID, DATA_ORIGIN, SYNTHETIC_BATCH_ID,
+    EVENT_TS_MS, DEBEZIUM_TS_MS, SOURCE_LSN, SOURCE_TXID, SNAPSHOT,
+    KEY_JSON, BEFORE_JSON, AFTER_JSON, SOURCE_JSON, PAYLOAD_JSON,
+    LANDING_INGESTED_AT, SRC_FILENAME, SRC_FILE_ROW_NUMBER, RAW_LOADED_AT
+)
+FROM (
+  SELECT
+    t.$1:event_id::VARCHAR,
+    t.$1:topic::VARCHAR,
+    TRY_TO_NUMBER(t.$1:kafka_partition::VARCHAR),
+    TRY_TO_NUMBER(t.$1:kafka_offset::VARCHAR),
+    TRY_TO_NUMBER(t.$1:kafka_timestamp_ms::VARCHAR),
+    t.$1:source_database::VARCHAR,
+    t.$1:source_schema::VARCHAR,
+    t.$1:source_table::VARCHAR,
+    t.$1:op::VARCHAR,
+    TRY_TO_NUMBER(t.$1:record_pk::VARCHAR),
+    TRY_TO_NUMBER(t.$1:replay_event_id::VARCHAR),
+    t.$1:data_origin::VARCHAR,
+    TRY_TO_NUMBER(t.$1:synthetic_batch_id::VARCHAR),
+    TRY_TO_NUMBER(t.$1:event_ts_ms::VARCHAR),
+    TRY_TO_NUMBER(t.$1:debezium_ts_ms::VARCHAR),
+    t.$1:source_lsn::VARCHAR,
+    t.$1:source_txid::VARCHAR,
+    t.$1:snapshot::VARCHAR,
+    PARSE_JSON(t.$1:key_json::VARCHAR),
+    PARSE_JSON(t.$1:before_json::VARCHAR),
+    PARSE_JSON(t.$1:after_json::VARCHAR),
+    PARSE_JSON(t.$1:source_json::VARCHAR),
+    PARSE_JSON(t.$1:payload_json::VARCHAR),
+    t.$1:ingested_at::VARCHAR,
+    METADATA$FILENAME,
+    METADATA$FILE_ROW_NUMBER,
+    METADATA$START_SCAN_TIME
+  FROM @RAW.BANKING_CDC_STAGE t
+)
+FILE_FORMAT = (FORMAT_NAME = RAW.CDC_PARQUET_FMT)
+PATTERN = '.*[.]parquet'
+ON_ERROR = 'ABORT_STATEMENT';

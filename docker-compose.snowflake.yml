@@ -1,0 +1,15 @@
+services:
+  airflow-scheduler:
+    volumes:
+      - ./snowflake:/opt/airflow/snowflake:ro
+      - ./banking_dbt:/opt/airflow/banking_dbt:ro
+      - ./scripts:/opt/airflow/snowflake/scripts:ro
+    env_file:
+      - ./snowflake/.env
+  airflow-apiserver:
+    volumes:
+      - ./snowflake:/opt/airflow/snowflake:ro
+      - ./banking_dbt:/opt/airflow/banking_dbt:ro
+      - ./scripts:/opt/airflow/snowflake/scripts:ro
+    env_file:
+      - ./snowflake/.env

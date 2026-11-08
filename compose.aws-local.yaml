@@ -1,0 +1,11 @@
+services:
+  kafka-s3-sink:
+    user: "${SINK_UID:?Set SINK_UID}:${SINK_GID:?Set SINK_GID}"
+    environment:
+      AWS_PROFILE: banking-iam
+      AWS_CONFIG_FILE: /aws/config
+      AWS_SHARED_CREDENTIALS_FILE: /aws/credentials
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    volumes:
+      - "${HOME}/.aws/config:/aws/config:ro"
+      - "${HOME}/.aws/credentials:/aws/credentials:ro"
