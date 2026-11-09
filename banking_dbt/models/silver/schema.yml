@@ -32,3 +32,9 @@ models:
     columns:
       - name: trans_id
         data_tests: [not_null, unique]
+      - name: data_origin
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [czech_original, faker_synthetic]

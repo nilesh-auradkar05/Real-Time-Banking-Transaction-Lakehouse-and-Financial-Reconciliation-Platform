@@ -1,0 +1,63 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: lint + unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --frozen --group dev
+      # Scoped to code that already meets the ruff config; widen as older modules are cleaned up.
+      - run: uv run --frozen ruff check ci tests docker/dags scripts
+      - run: uv run --frozen pytest -q
+
+  dbt-emulator:
+    name: dbt build on Snowflake emulator
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --frozen --group dbt-ci
+      # Seeds RAW.CDC_EVENTS from ci/fixtures.py, runs `dbt build` (models + data tests),
+      # then asserts the documented SCD2, conditional-key, origin and reconciliation outcomes.
+      - run: uv run --frozen python ci/run_dbt_emulator.py
+
+  dags:
+    name: Airflow DAG import
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      # Same Airflow version as dockerfile-airflow.dockerfile.
+      - run: |
+          uv venv .airflow-venv
+          uv pip install -p .airflow-venv "apache-airflow==3.3.2" apache-airflow-providers-snowflake pytest
+      - run: .airflow-venv/bin/python -m pytest -q tests/test_dag_integrity.py tests/test_snowflake_copy.py
+        env:
+          AIRFLOW_HOME: ${{ runner.temp }}/airflow

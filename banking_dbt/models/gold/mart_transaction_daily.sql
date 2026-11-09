@@ -1,3 +1,4 @@
+{{ config(materialized='table') }}
 select business_date, data_origin,
   count(*) as transaction_count,
   count(distinct account_key) as active_accounts,

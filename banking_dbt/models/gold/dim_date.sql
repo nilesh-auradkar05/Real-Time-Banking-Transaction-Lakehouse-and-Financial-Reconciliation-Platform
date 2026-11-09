@@ -9,7 +9,7 @@ with date_bounds as (
    (select row_number() over(order by seq4())-1 as n from table(generator(rowcount=>20000))) seq
  where dateadd(day,seq.n,b.min_date)<=b.max_date
 )
-select to_number(to_char(full_date,'YYYYMMDD')) as date_key,full_date,
+select {{ date_key('full_date') }} as date_key,full_date,
   year(full_date) as year, quarter(full_date) as quarter,
   month(full_date) as month,monthname(full_date) as month_name,
   dayofweekiso(full_date) as day_of_week,

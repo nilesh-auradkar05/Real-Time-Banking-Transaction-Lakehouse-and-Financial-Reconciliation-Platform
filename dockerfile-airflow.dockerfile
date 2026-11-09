@@ -16,8 +16,9 @@ RUN pip install --no-cache-dir \
 
 ENV DBT_VENV_PATH=/opt/airflow/dbt_venv
 
-# Keep dbt isolated from Airflow's Python dependencies.
+# Keep dbt isolated from Airflow's Python dependencies. Same minor version as CI
+# (.github/workflows/ci.yml) so the emulator build exercises the parser that runs here.
 RUN python -m venv "${DBT_VENV_PATH}" \
     && "${DBT_VENV_PATH}/bin/pip" install --no-cache-dir \
-      "dbt-core==1.8.*" \
-      "dbt-snowflake==1.8.*"
+      "dbt-core==1.10.*" \
+      "dbt-snowflake==1.10.*"

@@ -5,10 +5,25 @@ pause the source at a controlled window boundary. Otherwise results can be false
 mismatches even when all systems are working as designed.
 """
 from __future__ import annotations
+
 import argparse
 import os
 from pathlib import Path
+
 import snowflake.connector
+from dotenv import load_dotenv
+
+SQL_NAME = '08_reconciliation.sql'
+load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / 'snowflake' / '.env')
+
+def _reconciliation_sql_path() -> Path:
+    """Locate the SQL in the repo layout (scripts/ beside snowflake/) or the Airflow mount
+    (/opt/airflow/snowflake/scripts/reconcile.py beside /opt/airflow/snowflake/*.sql)."""
+    here = Path(__file__).resolve().parent
+    for candidate in (here.parent / 'snowflake' / SQL_NAME, here.parent / SQL_NAME):
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(f'{SQL_NAME} not found next to {here}')
 
 
 def main() -> None:
@@ -21,10 +36,10 @@ def main() -> None:
     if not args.source_caught_up:
         parser.error('Verify common CDC watermark before using --source-caught-up')
     conn = snowflake.connector.connect(
-        account=os.environ['SNOWFLAKE_ACCOUNT'],
-        user=os.environ['SNOWFLAKE_USER'],
-        password=os.environ['SNOWFLAKE_PASSWORD'],
-        warehouse=os.environ.get('SNOWFLAKE_WAREHOUSE', 'BANKING_ETL_WH'),
+        account=os.getenv('SNOWFLAKE_ACCOUNT'),
+        user=os.getenv('SNOWFLAKE_USER'),
+        password=os.getenv('SNOWFLAKE_PASSWORD'),
+        warehouse=os.getenv('SNOWFLAKE_WAREHOUSE', 'BANKING_ETL_WH'),
         database='BANKING_LAKEHOUSE', schema='AUDIT', autocommit=False,
     )
     try:
@@ -42,9 +57,7 @@ def main() -> None:
         cur.execute("""SELECT MAX(recon_run_id) FROM AUDIT.RECON_RUN
                     WHERE snapshot_run_id=%s""", (args.snapshot_run_id,))
         run_id = cur.fetchone()[0]
-        sql_root = Path(__file__).resolve().parents[1]
-        sql_path = (sql_root / 'sql/07_reconciliation.sql') if (sql_root / 'sql/07_reconciliation.sql').exists() else (sql_root / 'snowflake/sql/07_reconciliation.sql')
-        sql = sql_path.read_text()
+        sql = _reconciliation_sql_path().read_text()
         sql = sql[sql.index('INSERT INTO'):]
         cur.execute(sql, (args.snapshot_run_id,args.snapshot_run_id,run_id,args.tolerance))
         cur.execute("""INSERT INTO AUDIT.RECON_EXCEPTION

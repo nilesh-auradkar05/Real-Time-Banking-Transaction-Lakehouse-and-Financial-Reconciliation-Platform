@@ -1,30 +1,39 @@
 [project]
 name = "real-time-banking-transaction-lakehouse-and-financial-reconciliation-platform"
 version = "0.1.0"
-description = "Add your description here"
+description = "Banking CDC lakehouse: PostgreSQL replay, Debezium/Kafka, S3, Snowflake, dbt and reconciliation"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "boto3>=1.43.123",
     "confluent-kafka>=2.16.1",
-    "dbt-snowflake>=1.12.4",
     "faker>=40.44.0",
-    "fastparquet>=2026.9.0",
-    "kafka-python>=3.0.12",
     "loguru>=0.7.3",
-    "polaris>=0.1",
+    "psycopg[binary]>=3.2",
     "psycopg2-binary>=2.9.13",
     "pyarrow>=26.0.0",
-    "pytest>=9.2.0",
     "python-dotenv>=1.2.4",
-    "pyyaml>=6.0.3",
     "requests>=2.34.2",
 ]
+
+[dependency-groups]
+dev = ["pytest>=9.2.0", "ruff>=0.14"]
+# Emulator dbt build (ci/run_dbt_emulator.py). Same dbt minor as dockerfile-airflow.dockerfile.
+dbt-ci = ["dbt-core~=1.10.0", "dbt-snowflake~=1.10.0", "fakesnow>=0.12"]
 
 [tool.setuptools.packages.find]
 where = ["consumer"]
 include = ["banking_sink*"]
 
 [tool.pytest.ini_options]
-pythonpath = [".", "consumer"]
-testpaths = ["consumer/tests"]
+pythonpath = [".", "consumer", "docker/dags"]
+testpaths = ["consumer/tests", "tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+ignore = ["E701", "E702", "E731"]

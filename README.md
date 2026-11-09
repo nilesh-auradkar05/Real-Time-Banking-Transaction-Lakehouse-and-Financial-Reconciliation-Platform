@@ -1,12 +1,14 @@
 # Real-Time Banking Transaction Lakehouse & Financial Reconciliation Platform
 
+[![ci](https://github.com/nilesh-auradkar05/Real-Time-Banking-Transaction-Lakehouse-and-Financial-Reconciliation-Platform/actions/workflows/ci.yml/badge.svg)](.github/workflows/ci.yml)
+
 A banking data platform that turns historical transactions into a stream of real PostgreSQL changes, captures them through Debezium and Kafka, and lands the CDC records as Parquet in Amazon S3.
 
 **Czech banking data + Python replay/Faker → PostgreSQL → Debezium → Kafka → Python consumer → S3 → Snowflake → dbt → Power BI**
 
 The project is built around two questions: **did every source change reach its destination, and do the resulting balances still reconcile?** Historical banking data supplies the business relationships; controlled replay supplies inserts, updates, deletes and late arrivals that exercise the pipeline.
 
-The current implementation reaches **Parquet landing in S3**. Snowflake ingestion, dbt transformations, automated reconciliation and Power BI are the next layers, with data models and diagrams already defined. The intended delivery model is **near-real-time analytics**: continuous CDC capture followed by batch or micro-batch warehouse loads.
+The pipeline runs from PostgreSQL through **S3 landing, Snowflake RAW and dbt Silver/Gold**, orchestrated by an Airflow 3 DAG that records every load in `AUDIT.LOAD_BATCH`. Daily balance reconciliation runs in dbt; source-versus-warehouse account-window reconciliation runs as an optional DAG step. Replay-event delivery reconciliation and Power BI are the next layers. The intended delivery model is **near-real-time analytics**: continuous CDC capture followed by batch or micro-batch warehouse loads.
 
 ![Banking platform architecture: source replay, PostgreSQL CDC, Kafka, object storage, warehouse layers and analytics](docs/Banking%20CDC%20Analytics%20Platform%20Diagram.png)
 
@@ -18,7 +20,9 @@ The current implementation reaches **Parquet landing in S3**. Snowflake ingestio
 
 **Implemented path:** Python 3.12+ · uv · PostgreSQL 15 · Faker · Debezium 2.2 / Kafka Connect · Apache Kafka · confluent-kafka · PyArrow · Boto3 · Amazon S3 · Docker Compose · pytest
 
-**Warehouse and consumption design:** Snowflake · dbt · Apache Airflow 3 · Power BI. The Airflow Dockerfile includes the Snowflake provider and a separate dbt environment; the warehouse jobs and models are still to be added.
+**Warehouse and orchestration:** Snowflake (storage integration, external stage, `COPY INTO`) · dbt 1.10 · Apache Airflow 3.3 · GitHub Actions with a fakesnow Snowflake emulator.
+
+**Planned consumption:** Power BI.
 
 ## Source data
 
@@ -196,7 +200,7 @@ The reconciliation design checks **transport completeness** separately from **fi
 
 The source has dates without transaction times, and transaction IDs are not chronological. Reconciliation therefore works at **account-day grain** rather than assuming per-row running balances can be reconstructed by ID. Ambiguous same-day closing balances need explicit exception handling.
 
-The [modelling notes](docs/data_model.md#reconciliation-rules-tested-against-the-full-dataset) contain the recorded dataset profiling results and edge cases. Those results inform the design; automated warehouse reconciliation is still to be implemented.
+The [modelling notes](docs/data_model.md#reconciliation-rules-tested-against-the-full-dataset) contain the recorded dataset profiling results and edge cases. Those results inform the design. `fact_account_balance_daily` implements the account-day balance rule and labels every day `RECONCILED`, `VARIANCE`, `AMBIGUOUS_CLOSING` or `NO_COMPARABLE_PREVIOUS_DAY`; `scripts/reconcile.py` writes source-versus-warehouse count and amount checks to `AUDIT.RECON_*`. Comparing `replay_event` with delivered CDC is not implemented yet.
 
 ## Repository structure
 
@@ -227,7 +231,7 @@ The [modelling notes](docs/data_model.md#reconciliation-rules-tested-against-the
 └── uv.lock                       # Locked Python environment
 ```
 
-The dataset and local environment files are gitignored. `banking_dbt/` and Airflow DAG paths appear in the Compose mounts, but their pipeline implementation is not included yet.
+Also present: `banking_dbt/` (staging, Silver current state and SCD2 history, Gold star schema and marts), `snowflake/` (numbered setup, COPY and reconciliation SQL), `docker/dags/` (Airflow DAG plus the `banking_pipeline` helper package), `scripts/` (source snapshot export and reconciliation), and `ci/` (emulator fixtures and runner). The dataset and local environment files are gitignored.
 
 ## Setup
 
@@ -360,11 +364,23 @@ This scenario changes source records and records the planned/delivered changes i
 
 ## Tests
 
-Run the consumer unit tests without Kafka, PostgreSQL or AWS access:
+Every push and pull request runs [`.github/workflows/ci.yml`](.github/workflows/ci.yml); none of it needs cloud credentials.
+
+| Job | What it proves |
+|---|---|
+| lint + unit tests | Consumer parsing and storage, plus Snowflake `COPY` result handling used by the DAG |
+| dbt build on Snowflake emulator | All models and data tests build on fixture CDC events, then nine outcome checks: transport dedup, deletes, origin labelling, account and loan SCD2 version-in-force, `-1`/`-2` conditional keys, and detection of an injected 5.00 balance variance |
+| Airflow DAG import | The DAG loads in Airflow 3.3.2 with the expected task order |
+
+Run them locally:
 
 ```bash
-uv run pytest -q
+uv sync --frozen --all-groups
+uv run pytest -q                              # unit tests
+uv run python ci/run_dbt_emulator.py          # dbt build + outcome checks, no Snowflake account
 ```
+
+The emulator is [fakesnow](https://github.com/tekumara/fakesnow), which runs Snowflake SQL on DuckDB. The few Snowflake functions it lacks are shimmed in `ci/run_dbt_emulator.py` for CI only; see [`ci/README.md`](ci/README.md). It checks model logic, not Snowflake-specific behaviour such as stages, `COPY` or warehouse sizing.
 
 They cover schema-less and schema-wrapped CDC, snapshot reads, deletes, tombstones, malformed records, Parquet output, identical-batch retries and mixed-partition rejection. Storage tests use a fake S3 client.
 
@@ -392,13 +408,14 @@ The self-check refuses the Compose database port `5434` and any database with ex
 
 ## Known gaps
 
-- **Warehouse execution:** Snowflake provisioning/loading, the dbt project, audit-table population and reconciliation jobs are not implemented yet.
-- **Orchestration:** Airflow service definitions and image preparation exist, but there are no pipeline DAGs. The current setup guide runs only the CDC-to-S3 path.
+- **Replay delivery reconciliation:** `replay_run` and `replay_event` are not yet copied to Snowflake, so expected-versus-delivered CDC checks are designed but not running.
+- **Warehouse runbook:** the Setup section covers the CDC-to-S3 path; Snowflake setup is the numbered scripts in `snowflake/` and has not been written up as a step-by-step guide.
+- **Incremental models:** Silver and Gold rebuild as full tables on each run, which suits the 1M-transaction dataset but not unbounded growth.
 - **Delivery semantics:** The sink is designed for at-least-once delivery. End-to-end duplicate handling and automated recovery checks still need the downstream layers.
 - **Failure handling:** Malformed events stop the sink; a dead-letter queue and its remediation workflow are modelled but not implemented. Consumer-loop and rebalance behavior are not covered by the current unit suite.
 - **Analytics:** Power BI reports and the separate PaySim workload remain planned; PaySim source data is not bundled.
 - **Reproducibility:** Kafka uses the `latest` image tag, and the sink Dockerfile installs unpinned dependencies independently of `uv.lock`.
-- **Delivery automation:** GitHub Actions workflows and end-to-end CI are not present in this repository.
+- **CI scope:** CI covers unit tests, the dbt build on an emulator and DAG import. It does not run Kafka, Debezium or Snowflake end to end, and ruff covers only the newer modules.
 
 ## Credits
 

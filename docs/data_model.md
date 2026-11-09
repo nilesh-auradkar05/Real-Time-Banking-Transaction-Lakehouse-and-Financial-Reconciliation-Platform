@@ -236,6 +236,7 @@ Row counts cover the original Czech data only. They exclude placeholder members,
 - **Two clocks:** `date_key` is the business date from the source. `source_committed_at` and `warehouse_loaded_at` come from the pipeline and drive the lag measures, so replayed history keeps its 2013–2018 dates. SCD2 versions run on the pipeline clock, so facts pick a version by `source_committed_at`, never by `date_key`. A 2013 business date would always land on the first version and hide every simulated change.
 - **SCD2 first version:** dbt snapshots set `dbt_valid_from` to the run time, which can be later than a row's commit time, so a join could find no version. Backfill each key's first `valid_from` to `1900-01-01`.
 - **District on dimensions and facts:** the fact keys give each event its branch and home district for slicing. `dim_account` and `dim_client` also carry district as plain columns, because disponents appear on no fact and accounts should be countable by branch without a fact. There is no foreign key to `dim_district` from these dimensions, so this stays a star.
+- **Daily balance chain:** `fact_account_balance_daily` chains balances on the natural `account_id` and reports `account_key` as the version in force at the day's last committed change. Partitioning on `account_key` would restart the chain after every SCD2 change.
 - **Bridge keys:** the bridge points at current versions only and is rebuilt each run, so client history does not multiply its rows.
 
 ## Reconciliation rules, tested against the full dataset

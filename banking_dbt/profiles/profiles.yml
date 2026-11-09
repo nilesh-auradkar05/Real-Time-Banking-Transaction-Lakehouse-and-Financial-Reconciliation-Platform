@@ -1,0 +1,28 @@
+# Credentials come from the environment (snowflake/.env in Compose, repository secrets in CI).
+# `ci` targets the fakesnow emulator: scripts/ci_dbt_build.py patches the Snowflake connector,
+# so its account/user values are placeholders and never reach Snowflake.
+banking_dbt:
+  target: "{{ env_var('DBT_TARGET', 'prod') }}"
+  outputs:
+    prod:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE', 'FINANCE_DBT_ROLE') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'BANKING_ETL_WH') }}"
+      database: BANKING_LAKEHOUSE
+      schema: SILVER
+      threads: 4
+      client_session_keep_alive: false
+      query_tag: banking_dbt
+    ci:
+      type: snowflake
+      account: fakesnow
+      user: ci
+      password: ci
+      role: ci
+      warehouse: ci
+      database: BANKING_LAKEHOUSE
+      schema: SILVER
+      threads: 1

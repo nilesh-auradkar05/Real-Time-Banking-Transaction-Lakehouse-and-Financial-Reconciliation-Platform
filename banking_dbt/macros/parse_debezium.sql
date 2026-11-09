@@ -47,3 +47,81 @@
   )
   select * from ranked where rn=1
 {%- endmacro %}
+
+-- SCD2 history for one captured table. One version per change in row state or delete flag.
+-- Ordering follows WAL position, then commit time, then Kafka coordinates (cdc_order_desc, ascending).
+-- valid_from runs on the pipeline clock (source commit time), never the business date.
+-- The first version of each key starts at 1900-01-01 so facts committed before the
+-- snapshot timestamp still find a version (docs/data_model.md, "SCD2 first version").
+{% macro cdc_scd2_history(table_name, pk) -%}
+{%- set order_asc -%}
+  try_to_number(source_lsn) asc nulls first, event_ts_ms asc nulls first,
+  debezium_ts_ms asc nulls first, topic, kafka_partition, kafka_offset
+{%- endset -%}
+with events as (
+    select
+        coalesce(try_to_number(record_pk), try_to_number(after_json:{{ pk }}::varchar),
+                 try_to_number(before_json:{{ pk }}::varchar),
+                 try_to_number(key_json:{{ pk }}::varchar)) as {{ pk }},
+        coalesce(after_json, before_json) as state_json,
+        op, event_id, topic, kafka_partition, kafka_offset, source_lsn,
+        event_ts_ms, debezium_ts_ms, kafka_timestamp_ms, raw_loaded_at
+    from {{ ref('stg_cdc_events') }}
+    where source_table = '{{ table_name }}' and op in ('r','c','u','d')
+), ordered as (
+    select *,
+        lag(to_json(state_json)) over (partition by {{ pk }} order by {{ order_asc }}) as prev_state,
+        lag(op = 'd') over (partition by {{ pk }} order by {{ order_asc }}) as prev_deleted,
+        row_number() over (partition by {{ pk }} order by {{ order_asc }}) as event_seq
+    from events
+    where {{ pk }} is not null
+), changed as (
+    -- event_seq microseconds keep versions committed in the same millisecond strictly ordered.
+    select *,
+        dateadd('microsecond', event_seq - 1,
+                coalesce(to_timestamp_ntz(event_ts_ms, 3),
+                         convert_timezone('UTC', raw_loaded_at)::timestamp_ntz)) as version_at
+    from ordered
+    where prev_state is null
+       or prev_deleted is distinct from (op = 'd')
+       or prev_state is distinct from to_json(state_json)
+), versions as (
+    select *,
+        row_number() over (partition by {{ pk }} order by event_seq) as version_number,
+        lead(version_at) over (partition by {{ pk }} order by event_seq) as valid_to
+    from changed
+)
+select
+    {{ pk }},
+    state_json,
+    op = 'd' as is_deleted,
+    event_id,
+    version_number,
+    case when version_number = 1 then '1900-01-01'::timestamp_ntz else version_at end as valid_from,
+    valid_to,
+    valid_to is null as is_current,
+    {{ hash_key(pk ~ ", event_id") }} as version_key,
+    source_lsn, event_ts_ms, kafka_partition, kafka_offset
+from versions
+{%- endmacro %}
+
+-- Source writes 'czech_original' or 'faker_synthetic' (postgres/schema.sql CHECK constraints).
+-- Anything else is surfaced as 'unknown' and fails assert_origin_known rather than being absorbed.
+{% macro origin_code(column) -%}
+  (case when {{ column }} in ('czech_original', 'faker_synthetic') then {{ column }} else 'unknown' end)
+{%- endmacro %}
+-- Deterministic surrogate key. Snowflake HASH is signed 64-bit, so ABS fits NUMBER(38,0).
+-- The fakesnow emulator (target `ci`) maps HASH to DuckDB's unsigned 64-bit hash, which
+-- overflows that cast; the modulo keeps CI keys in range without changing production SQL.
+{% macro hash_key(args) -%}
+  {%- if target.name == 'ci' -%}
+  (hash({{ args }}) % 9223372036854775807)::number(38,0)
+  {%- else -%}
+  abs(hash({{ args }}))::number(38,0)
+  {%- endif -%}
+{%- endmacro %}
+
+-- yyyymmdd integer key, computed arithmetically (no string formatting round trip).
+{% macro date_key(column) -%}
+  (year({{ column }}) * 10000 + month({{ column }}) * 100 + day({{ column }}))
+{%- endmacro %}

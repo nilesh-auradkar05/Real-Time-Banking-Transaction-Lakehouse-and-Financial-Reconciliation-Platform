@@ -1,7 +1,7 @@
 {{ config(materialized='table') }}
 select distinct
-  abs(hash(coalesce(trans_type,'UNKNOWN'),coalesce(operation,'UNKNOWN'),
-           coalesce(category,'UNKNOWN')))::number(38,0) as transaction_type_key,
+  {{ hash_key("coalesce(trans_type,'UNKNOWN'), coalesce(operation,'UNKNOWN'), coalesce(category,'UNKNOWN')") }}
+    as transaction_type_key,
   coalesce(trans_type,'UNKNOWN') as type_code,
   case when trans_type in ('PRIJEM','C') then 'CREDIT'
        when trans_type in ('VYDAJ','VYBER','D','P') then 'DEBIT' else 'UNKNOWN' end as direction,

@@ -12,7 +12,7 @@ WITH source_group AS (
     FROM AUDIT.SOURCE_ACCOUNT_WINDOW
     WHERE snapshot_run_id = %s GROUP BY 1,2
 ), target_group AS (
-    SELECT t.account_id,lower(coalesce(t.data_origin,'unkown')) as data_origin,
+    SELECT t.account_id,lower(coalesce(t.data_origin,'unknown')) as data_origin,
            count(*) as target_count,sum(t.amount)::number(18,2) as target_amount
     FROM SILVER.FIN_TRANS t
     JOIN (SELECT min(window_start) as window_start,max(window_end) as window_end
@@ -29,7 +29,7 @@ WITH source_group AS (
     FROM source_group s FULL OUTER JOIN target_group t
     ON s.account_id=t.account_id and s.data_origin=t.data_origin
 )
-SELECT %s,account_id,data_origin,source_amount,target_amount,
+SELECT %s,account_id,data_origin,source_count,target_count,
     source_count-target_count,source_amount,target_amount,
     source_amount-target_amount,
     IFF(source_count=target_count AND abs(source_amount-target_amount)<=%s,'MATCH','MISMATCH')

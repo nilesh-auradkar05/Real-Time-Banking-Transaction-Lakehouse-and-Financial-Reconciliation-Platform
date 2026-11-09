@@ -1,94 +1,117 @@
-"""
-Airflow 3: Snowflake COPY landing, audit loads, dbt build, optional reconcillation.
-"""
+"""Airflow 3: S3 landing -> Snowflake RAW, audit feeds, dbt build, optional reconciliation.
 
+Each COPY writes one AUDIT.LOAD_BATCH row whether it succeeds or fails, so load history
+is queryable next to the data it produced.
+"""
 from __future__ import annotations
-from datetime import datetime, timezone
+
+import logging
 import os
+import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
-from loguru import logger
-from airflow.sdk import dag, task, get_current_context
 
-SQL_HOME=Path('/opt/airflow/snowflake/sql')
+from airflow.sdk import dag, get_current_context, task
+from banking_pipeline.snowflake_copy import read_copy_statement, summarize_copy
 
-def _copy_with_counts(cur, file_name: str):
-    text=(SQL_HOME/file_name).read_text()
-    sql=text[text.index('COPY INTO'):].strip()
-    cur.execute(sql)
-    data=cur.fetchall()
+log = logging.getLogger(__name__)
 
-    # Snowflake COPY result: file,status,rows_parsed,rows_loaded,error_limit,errors_seen,...
-    files=sum(1 for row in data if row[1] in ('LOADED','PARTIALLY LOADED'))
-    loaded=sum(int(row[3] or 0) for row in data if row[1] in ('LOADED','PARTIALLY LOADED'))
-    rejected=sum(int(row[5] or 0) for row in data if row[1] in ('LOADED','PARTIALLY LOADED'))
-    return files,loaded,rejected
+SNOWFLAKE_CONN_ID = "snowflake_banking"
+# docker-compose.snowflake.yml mounts ./snowflake here (and ./scripts under it).
+SQL_HOME = Path(os.getenv("SNOWFLAKE_SQL_HOME", "/opt/airflow/snowflake"))
+DBT_PROJECT_DIR = os.getenv("DBT_PROJECT_DIR", "/opt/airflow/banking_dbt")
+DBT_BIN = os.getenv("DBT_BIN", "/opt/airflow/dbt_venv/bin/dbt")
 
-@dag(dag_id='banking_s3_snowflake', start_date=datetime(2026,1,1,tzinfo=timezone.utc),
-    schedule='*/15 * * * *',catchup=False,max_active_runs=1,
-    tags=['banking','cdc','snowflake','dbt','reconciliation'])
+LOAD_BATCH_INSERT = """
+INSERT INTO AUDIT.LOAD_BATCH (airflow_dag_id, airflow_run_id, target_table, window_start,
+    window_end, files_loaded, rows_loaded, rows_rejected, status, error_message,
+    started_at, finished_at)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP())
+"""
+
+
+def _run_copy(cur, file_name: str, target_table: str) -> None:
+    """Run one COPY script, record it in AUDIT.LOAD_BATCH, and raise if any file failed."""
+    ctx = get_current_context()
+    started = datetime.now(timezone.utc)
+    window_start = ctx.get("data_interval_start") or started
+    window_end = ctx.get("data_interval_end") or started
+    try:
+        cur.execute(read_copy_statement(SQL_HOME, file_name))
+        summary = summarize_copy(cur.fetchall())
+        status = "SUCCESS" if summary.ok else "FAILED"
+        error = summary.first_error
+    except Exception as exc:  # recorded, then re-raised below
+        log.exception("COPY %s failed", file_name)
+        summary, status, error = None, "FAILED", str(exc)[:1024]
+    cur.execute(LOAD_BATCH_INSERT, (
+        ctx["dag"].dag_id, ctx["run_id"], target_table, window_start, window_end,
+        summary.files_loaded if summary else 0, summary.rows_loaded if summary else 0,
+        summary.rows_rejected if summary else 0, status, error, started))
+    if status == "FAILED":
+        raise RuntimeError(f"{target_table} COPY failed: {error}")
+    log.info("%s: files=%s rows=%s rejected=%s", target_table, summary.files_loaded,
+             summary.rows_loaded, summary.rows_rejected)
+
+
+def _snowflake_cursor_session(copies: list[tuple[str, str]]) -> None:
+    from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
+
+    hook = SnowflakeHook(snowflake_conn_id=SNOWFLAKE_CONN_ID)
+    conn = hook.get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("USE WAREHOUSE BANKING_ETL_WH")
+            cur.execute("USE DATABASE BANKING_LAKEHOUSE")
+            try:
+                for file_name, target in copies:
+                    _run_copy(cur, file_name, target)
+            finally:
+                conn.commit()  # keep LOAD_BATCH rows for failed loads too
+    finally:
+        conn.close()
+
+
+@dag(dag_id="banking_s3_snowflake", start_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
+     schedule="*/15 * * * *", catchup=False, max_active_runs=1,
+     tags=["banking", "cdc", "snowflake", "dbt", "reconciliation"])
 def banking_s3_snowflake():
     @task(retries=2)
     def load_raw():
-        from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
-        ctx=get_current_context()
-        hook=SnowflakeHook(snowflake_conn_id='snowflake_banking')
-        started=datetime.now(timezone.utc)
-        with hook.get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute('USE WAREHOUSE BANKING_ETL_WH')
-                cur.execute('USE DATABASE BANKING_LAKEHOUSE')
-                try:
-                    files,rows,rejected=_copy_with_counts(cur,'03_copy_into_raw.sql')
-                    status='SUCCESS';error_message=None
-                except Exception as e:
-                    files=rows=rejected=0;status='FAILED';error_message=str(e)[:1024]
-                    logger.exception('RAW COPY failed')
-                cur.execute("""
-                INSERT INTO AUDIT.LOAD_BATCH (airflow_dag_id,airlfow_run_id,target_table,window_start,window_end,files_loaded,rows_loaded,rows_rejected,status,error_message,started_at,finished_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,CURRENT_TIMESTAMP())""",
-                (ctx['dag'].dag_id,ctx['run_id'],'RAW.CDC_EVENTS',started,
-                datetime.now(timezone.utc),files,rows,rejected,status,error_message,started))
-            conn.commit()
-            if status=='FAILED':
-                raise RuntimeError(error_message)
-            logger.info(f'RAW load: files={files} rows={rows} rejected={rejected}')
+        _snowflake_cursor_session([("03_copy_into_raw.sql", "RAW.CDC_EVENTS")])
 
     @task(retries=2)
     def load_audit_feeds():
-        from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
-        hook=SnowflakeHook(snowflake_conn_id='snowflake_banking')
-        with hook.get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute('USE DATABASE BANKING_LAKEHOUSE')
-                for sql in ['07_copy_source_windows.sql','07b_copy_dead_letters.sql']:
-                    files,rows,rejected=_copy_with_counts(cur,sql)
-                    logger.info(f"{sql}: files={files} rows={rows} rejected={rejected}")
-            conn.commit()
+        _snowflake_cursor_session([
+            ("07_copy_source_windows.sql", "AUDIT.SOURCE_ACCOUNT_WINDOW"),
+            ("07b_copy_dead_letters.sql", "AUDIT.DEAD_LETTER_EVENT"),
+        ])
 
     @task(retries=1)
     def build_models():
-        env=os.environ.copy()
-        env['DNT_PROFILES_DIR']='/opt/airflow/banking_dbt/.dbt'
-        subprocess.run(['/opt/airflow/dbt_venv/bin/dbt','build',
-            '--project-dir','/opt/airflow/banking_dbt',
-            '--profiles-dir',env['DBT_PROFILES_DIR']],check=True,env=env,timeout=1800)
+        env = os.environ.copy()
+        env.setdefault("DBT_TARGET", "prod")
+        # The project may be mounted read-only, so artifacts and logs go to /tmp.
+        subprocess.run(
+            [DBT_BIN, "build", "--project-dir", DBT_PROJECT_DIR,
+             "--profiles-dir", f"{DBT_PROJECT_DIR}/profiles",
+             "--target-path", "/tmp/dbt/target", "--log-path", "/tmp/dbt/logs"],
+            check=True, env=env, timeout=1800)
 
     @task(retries=0)
     def optional_reconciliation():
-        snapshot_id=os.getenv('SOURCE_SNAPSHOT_ID','').strip()
+        snapshot_id = os.getenv("SOURCE_SNAPSHOT_ID", "").strip()
         if not snapshot_id:
-            logger.info('No SOURCE_SNAPSHOT_ID; no source-to-target reconciliation will be claimed')
+            log.info("No SOURCE_SNAPSHOT_ID; no source-to-target reconciliation is claimed")
             return
-        if os.getenv('RECON_WATERMARK_VERIFIED','false').lower() != 'true':
-            raise RuntimeError('Set RECON_WATERMARK_VERIFIED=true only after verifying source/warehouse CDC watermarks')
-        env=os.environ.copy()
-        subprocess.run(['python3','/opt/airflow/snowflake/scripts/reconcile.py',
-            '--snapshot-run-id',snapshot_id,'--source-caught-up'],
-            check=True,env=env,timeout=900)
+        if os.getenv("RECON_WATERMARK_VERIFIED", "false").lower() != "true":
+            raise RuntimeError("Set RECON_WATERMARK_VERIFIED=true only after verifying "
+                               "source/warehouse CDC watermarks")
+        subprocess.run(["python3", str(SQL_HOME / "scripts" / "reconcile.py"),
+                        "--snapshot-run-id", snapshot_id, "--source-caught-up"],
+                       check=True, env=os.environ.copy(), timeout=900)
 
-    raw = load_raw()
-    audit_trans = load_audit_feeds()
-    models = build_models()
+    load_raw() >> load_audit_feeds() >> build_models() >> optional_reconciliation()
 
-    raw >> audit_trans >> models >> optional_reconciliation()
 
 banking_s3_snowflake()

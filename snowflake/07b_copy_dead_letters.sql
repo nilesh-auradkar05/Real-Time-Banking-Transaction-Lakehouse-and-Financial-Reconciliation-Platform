@@ -7,7 +7,7 @@ COPY INTO AUDIT.DEAD_LETTER_EVENT (
 )
 FROM (
     SELECT t.$1:event_id::varchar,t.$1:topic::varchar,
-    TRY_TO_NUMBER(t.$1:kafka_parition::varchar),
+    TRY_TO_NUMBER(t.$1:kafka_partition::varchar),
     TRY_TO_NUMBER(t.$1:kafka_offset::varchar),
     t.$1:error_class::varchar,t.$1:error_message::varchar,
     TRY_TO_NUMBER(t.$1:retry_count::varchar),

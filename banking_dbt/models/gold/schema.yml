@@ -12,6 +12,14 @@ models:
     columns:
       - name: loan_key
         data_tests: [unique, not_null]
+  - name: dim_card
+    columns:
+      - name: card_key
+        data_tests: [unique, not_null]
+  - name: dim_standing_order
+    columns:
+      - name: order_key
+        data_tests: [unique, not_null]
   - name: dim_date
     columns:
       - name: date_key
@@ -20,15 +28,22 @@ models:
     columns:
       - name: data_origin_key
         data_tests: [unique, not_null]
+      - name: origin_code
+        data_tests: [unique, not_null]
   - name: dim_district
     columns:
       - name: district_key
+        data_tests: [unique, not_null]
+  - name: dim_transaction_type
+    columns:
+      - name: transaction_type_key
         data_tests: [unique, not_null]
   - name: bridge_account_client
     columns:
       - name: disp_id
         data_tests: [unique, not_null]
   - name: fact_transaction
+    description: One posted transaction. Keys follow docs/data_model.md; -1 = not applicable, -2 = expected but no match.
     columns:
       - name: transaction_id
         data_tests: [unique, not_null]
@@ -36,19 +51,38 @@ models:
         data_tests:
           - not_null
           - relationships:
-              to: ref('dim_data_origin')
-              field: data_origin_key
+              arguments: {to: ref('dim_data_origin'), field: data_origin_key}
       - name: account_key
         data_tests:
           - relationships:
-              to: ref('dim_account')
-              field: account_key
+              arguments: {to: ref('dim_account'), field: account_key}
+      - name: order_key
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_standing_order'), field: order_key}
+      - name: loan_key
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_loan'), field: loan_key}
+      - name: card_key
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_card'), field: card_key}
+      - name: date_key
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_date'), field: date_key}
   - name: fact_account_balance_daily
     columns:
-      - name: account_key
+      - name: account_id
         data_tests: [not_null]
       - name: business_date
         data_tests: [not_null]
+      - name: reconciliation_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [RECONCILED, VARIANCE, AMBIGUOUS_CLOSING, NO_COMPARABLE_PREVIOUS_DAY]
   - name: fact_loan
     columns:
       - name: source_loan_id

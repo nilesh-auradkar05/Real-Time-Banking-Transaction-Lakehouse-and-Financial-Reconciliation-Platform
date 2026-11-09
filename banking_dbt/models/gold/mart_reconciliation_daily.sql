@@ -1,3 +1,4 @@
+{{ config(materialized='table') }}
 select business_date, count(*) as account_days,
   count_if(reconciliation_status='RECONCILED') as reconciled_account_days,
   count_if(reconciliation_status='VARIANCE') as variance_account_days,

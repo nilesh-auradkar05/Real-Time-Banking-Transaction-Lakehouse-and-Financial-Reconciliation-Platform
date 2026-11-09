@@ -1,6 +1,6 @@
 """Publish a PostgreSQL current-state account/window snapshot to S3 for reconciliation.
 
-Requires: pip install 'psycopg[binary]' boto3; PG_DSN environment/secret, AWS IAM auth.
+Requires: pip install 'psycopg[binary]' boto3 (psycopg 3 API); PG_DSN environment/secret, AWS IAM auth.
 Choose window on BUSINESS DATE, not the date CDC events were ingested.
 Requires quiescent source/warehouse or an agreed CDC watermark for reliable comparisons.
 """
@@ -9,9 +9,11 @@ import json
 import os
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 import boto3
 import psycopg
+from dotenv import load_dotenv
 
 SQL = """
 SELECT account_id,lower(coalesce(data_origin,'unknown')) as data_origin,
@@ -23,11 +25,13 @@ ORDER BY account_id,data_origin
 """
 
 def main():
+    load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / '.env')
     parser=argparse.ArgumentParser()
     parser.add_argument('--start',required=True,help='YYYY-MM-DD')
     parser.add_argument('--end',required=True,help='YYYY-MM-DD')
     parser.add_argument('--bucket',required=True)
-    parser.add_argument('--prefix',default='landing/cdc')
+    parser.add_argument('--prefix',default='landing',
+        help='Parent of _audit/; must match RAW.BANKING_SOURCE_AUDIT_STAGE (s3://<bucket>/landing/_audit/source_windows/)')
     parser.add_argument('--snapshot-run-id',default=None)
     args=parser.parse_args()
     if args.start>args.end: raise SystemExit('start must be <= end')
