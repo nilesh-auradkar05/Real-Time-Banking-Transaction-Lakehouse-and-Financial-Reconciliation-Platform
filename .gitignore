@@ -21,3 +21,6 @@ dataset/
 kafka-backup/
 logs/
 plugins/
+# dbt anonymous-usage id, written into the profiles dir on first run
+.user.yml
+docker/postgres

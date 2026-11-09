@@ -43,7 +43,13 @@
   ), ranked as (
     select *, row_number() over (
       partition by source_pk order by {{ cdc_order_desc() }}
-    ) as rn from changes where source_pk is not null
+    ) as rn,
+    -- First time the row was observed (insert or snapshot read). A Debezium re-snapshot
+    -- re-sends unchanged rows as op r with a later commit clock; facts must keep the first.
+    min(case when op in ('r','c') then event_ts_ms end) over (partition by source_pk) as first_event_ts_ms,
+    min(case when op in ('r','c') then raw_loaded_at end) over (partition by source_pk) as first_raw_loaded_at,
+    count_if(op = 'r') over (partition by source_pk) as snapshot_read_count
+    from changes where source_pk is not null
   )
   select * from ranked where rn=1
 {%- endmacro %}

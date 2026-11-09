@@ -39,3 +39,14 @@ def test_missing_copy_statement_raises():
 def test_every_dag_copy_script_contains_one_statement(name):
     statement = read_copy_statement(SNOWFLAKE_SQL, name)
     assert statement.upper().startswith("COPY INTO") and ";" not in statement
+
+
+def test_decimal_columns_are_parsed_with_explicit_scale():
+    """TO_NUMBER defaults to NUMBER(38,0); without a scale, amounts silently lose their cents.
+    This is the bug that made every account with non-zero cents MISMATCH in reconciliation."""
+    import re
+
+    for path in SNOWFLAKE_SQL.glob("*.sql"):
+        for call in re.findall(r"TRY_TO_NUMBER\(([^()]*(?:\([^()]*\))?[^()]*)\)", path.read_text(), re.I):
+            if re.search(r"amount|balance", call, re.I):
+                assert call.count(",") >= 2, f"{path.name}: TRY_TO_NUMBER({call}) needs precision and scale"

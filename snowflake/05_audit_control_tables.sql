@@ -106,7 +106,7 @@ SELECT try_to_number(after_json:replay_event_id::varchar) AS replay_event_id,
        after_json:operation::varchar AS operation,
        after_json:data_origin::varchar AS data_origin,
        after_json:business_date::varchar AS business_date,
-       try_to_number(after_json:amount::varchar) AS amount,
+       TRY_TO_NUMBER(after_json:amount::varchar, 18, 2) AS amount,
        event_id AS cdc_transport_id
 FROM RAW.CDC_EVENTS WHERE source_table='replay_event' AND op IN ('c','r','u');
 

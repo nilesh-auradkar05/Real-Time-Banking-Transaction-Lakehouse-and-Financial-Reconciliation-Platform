@@ -8,6 +8,7 @@ from .config import Settings
 from .runner import KafkaS3Sink
 from .storage import ParquetS3Writer
 
+
 def main() -> int:
     logger.remove()
     logger.add(

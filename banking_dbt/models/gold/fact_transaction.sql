@@ -1,11 +1,16 @@
 {{ config(materialized='table') }}
 -- Grain: one posted transaction (current CDC state, deletes kept with is_deleted).
 -- Dimension versions are chosen by source commit time (pipeline clock), never by business date.
+-- Commit time is the FIRST observation of the row: a Debezium re-snapshot re-sends unchanged
+-- rows later, and using that time would remap history onto today's dimension versions.
 -- Conditional keys: -1 = not applicable, -2 = expected but no match (docs/data_model.md).
 with tx as (
     select *,
-        coalesce(to_timestamp_ntz(source_event_ts_ms, 3),
-                 convert_timezone('UTC', warehouse_loaded_at)::timestamp_ntz) as cdc_at
+        coalesce(to_timestamp_ntz(source_first_committed_ts_ms, 3),
+                 to_timestamp_ntz(source_event_ts_ms, 3),
+                 convert_timezone('UTC', warehouse_first_loaded_at)::timestamp_ntz) as cdc_at,
+        convert_timezone('UTC', coalesce(warehouse_first_loaded_at, warehouse_loaded_at))::timestamp_ntz
+            as first_loaded_at
     from {{ ref('fin_trans') }}
 ), owners as (
     select account_id, client_id from {{ ref('fin_disp') }}
@@ -69,12 +74,10 @@ select
     t.other_account_id as partner_account_id,
     t.amount::number(18,2) as amount,
     t.balance::number(18,2) as balance_after,
-    to_timestamp_ntz(t.source_event_ts_ms, 3) as source_committed_at,
-    convert_timezone('UTC', t.warehouse_loaded_at)::timestamp_ntz as warehouse_loaded_at,
-    datediff('second', to_timestamp_ntz(t.source_event_ts_ms, 3),
-             convert_timezone('UTC', t.warehouse_loaded_at)::timestamp_ntz) as ingestion_lag_seconds,
-    coalesce(datediff('second', to_timestamp_ntz(t.source_event_ts_ms, 3),
-             convert_timezone('UTC', t.warehouse_loaded_at)::timestamp_ntz)
+    t.cdc_at as source_committed_at,
+    t.first_loaded_at as warehouse_loaded_at,
+    datediff('second', t.cdc_at, t.first_loaded_at) as ingestion_lag_seconds,
+    coalesce(datediff('second', t.cdc_at, t.first_loaded_at)
              > {{ var('late_arrival_threshold_seconds', 1800) }}, false) as is_late_arriving,
     t.is_deleted,
     -- Lineage and slicing columns used by downstream marts.
@@ -85,7 +88,9 @@ select
     t.trans_type,
     coalesce(t.operation, 'UNKNOWN') as operation_code,
     coalesce(t.category, 'UNKNOWN') as category_code,
-    t.recorded_at
+    t.recorded_at,
+    t.snapshot_read_count > 1 or (t.snapshot_read_count = 1 and t.source_first_committed_ts_ms
+        < t.source_event_ts_ms) as was_resnapshotted
 from tx t
 left join account_version av on av.trans_id = t.trans_id
 left join client_version cv on cv.trans_id = t.trans_id

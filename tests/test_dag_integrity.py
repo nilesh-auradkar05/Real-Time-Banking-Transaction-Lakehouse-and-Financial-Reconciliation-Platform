@@ -17,3 +17,11 @@ def test_dags_import_cleanly():
     assert [t.task_id for t in dag.topological_sort()] == [
         "load_raw", "load_audit_feeds", "build_models", "optional_reconciliation"]
     assert dag.max_active_runs == 1 and not dag.catchup
+
+
+def test_preflight_dag_is_manual_and_ordered():
+    bag = DagBag(dag_folder=str(DAGS))
+    dag = bag.dags.get("banking_preflight")
+    assert dag is not None and dag.schedule is None
+    assert [t.task_id for t in dag.topological_sort()] == [
+        "check_mounts", "check_dbt_connection", "check_snowflake_objects"]

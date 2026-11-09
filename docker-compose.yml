@@ -1,3 +1,44 @@
+# Shared by every Airflow service (pattern from the Food Delivery platform's airflow/docker-compose.yaml).
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: dockerfile-airflow.dockerfile
+  image: banking-airflow:3.3.2
+  profiles: ["airflow"]
+  restart: always
+  env_file:
+    # SNOWFLAKE_* credentials, shared by the snowflake_banking connection, dbt and reconcile.py.
+    - path: ./snowflake/.env
+      required: false            # airflow-init fails with a clear message when it is missing
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@airflow-postgres:5432/${AIRFLOW_DB_NAME:-airflow}
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
+    # Airflow 3 components sign Execution API calls with this shared secret.
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:-local-dev-only-change-me}
+    # Tasks reach the Execution API by the api-server's service name; localhost would point
+    # at the scheduler's own container and every task would fail with a state mismatch.
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL: "30"
+    AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER:-admin}
+    AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-admin}
+    SNOWFLAKE_SQL_HOME: /opt/airflow/snowflake
+    BANKING_SCRIPTS_HOME: /opt/airflow/scripts
+    DBT_PROJECT_DIR: /opt/airflow/banking_dbt
+    DBT_TARGET: prod
+    DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
+  volumes:
+    - ./docker/dags:/opt/airflow/dags:ro
+    - airflow_logs:/opt/airflow/logs      # named volume: bind mounts on NTFS/WSL are not writable by uid 50000
+    - ./snowflake:/opt/airflow/snowflake:ro
+    - ./scripts:/opt/airflow/scripts:ro
+    - ./banking_dbt:/opt/airflow/banking_dbt:ro
+  depends_on:
+    airflow-postgres:
+      condition: service_healthy
+
 services:
   kafka:
     image: apache/kafka:latest
@@ -57,61 +98,88 @@ services:
               -c max_wal_senders=10
               -c max_replication_slots=10
     
-  airflow-apiserver:
-    build:
-      context: .
-      dockerfile: dockerfile-airflow.dockerfile
-    container_name: airflow-apiserver
-    restart: always
-    depends_on:
-      - airflow-scheduler
-      - airflow-postgres
-    environment:
-      - AIRFLOW__CORE__LOAD_EXAMPLES=False
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@airflow-postgres:5432/${AIRFLOW_DB_NAME}
-    volumes:
-      - ./docker/dags:/opt/airflow/dags
-      - ./docker/logs:/opt/airflow/logs
-      - ./docker/plugins:/opt/airflow/plugins
-      - ./banking_dbt:/opt/airflow/banking_dbt
-      - ./banking_dbt/.dbt:/home/airflow/.dbt
-    ports:
-      - "8080:8080"
-    command: api-server
-
-  airflow-scheduler:
-    build:
-      context: .
-      dockerfile: dockerfile-airflow.dockerfile
-    container_name: airflow-scheduler
-    restart: always
-    depends_on:
-      - airflow-postgres
-    environment:
-      - AIRFLOW__CORE__LOAD_EXAMPLES=False
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@airflow-postgres:5432/${AIRFLOW_DB_NAME}
-    volumes:
-      - ./docker/dags:/opt/airflow/dags
-      - ./docker/logs:/opt/airflow/logs
-      - ./docker/plugins:/opt/airflow/plugins
-      - ./banking_dbt:/opt/airflow/banking_dbt
-      - ./banking_dbt/.dbt:/home/airflow/.dbt
-    command: scheduler
-
-
-
+  # ---- Airflow 3 (LocalExecutor) ---------------------------------------------------------
+  # Opt-in: `docker compose --profile airflow up -d`. UI http://localhost:8080
   airflow-postgres:
     image: postgres:15
     container_name: airflow-postgres
+    profiles: ["airflow"]
     restart: always
     environment:
-      POSTGRES_USER: ${AIRFLOW_DB_USER}
-      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
-      POSTGRES_DB: ${AIRFLOW_DB_NAME}
+      POSTGRES_USER: ${AIRFLOW_DB_USER:-airflow}
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD:-airflow}
+      POSTGRES_DB: ${AIRFLOW_DB_NAME:-airflow}
     volumes:
       - airflow_postgres_data:/var/lib/postgresql/data
     ports:
-      - "5433:5432"  # separate from banking-postgres to avoid conflict
+      - "5433:5432"  # separate from the banking source database
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AIRFLOW_DB_USER:-airflow} -d ${AIRFLOW_DB_NAME:-airflow}"]
+      interval: 5s
+      retries: 10
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow-init
+    restart: "no"
+    command:
+      - bash
+      - -c
+      - |
+        set -euo pipefail
+        missing=""
+        for v in SNOWFLAKE_ACCOUNT SNOWFLAKE_USER SNOWFLAKE_PASSWORD; do
+          [ -n "$${!v:-}" ] || missing="$$missing $$v"
+        done
+        if [ -n "$$missing" ]; then
+          echo "snowflake/.env is missing:$$missing (copy snowflake/.env.example)" >&2; exit 1
+        fi
+        airflow db migrate
+        if airflow users list 2>/dev/null | awk '{print $$3}' | grep -qx "$${AIRFLOW_ADMIN_USER}"; then
+          echo "Airflow user $${AIRFLOW_ADMIN_USER} already exists"
+        else
+          airflow users create --username "$${AIRFLOW_ADMIN_USER}" --password "$${AIRFLOW_ADMIN_PASSWORD}" \
+            --firstname Airflow --lastname Admin --role Admin --email admin@example.com
+        fi
+        airflow connections get snowflake_banking -o json > /dev/null
+        echo "airflow-init complete"
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+
+  airflow-apiserver:
+    <<: *airflow-common
+    container_name: airflow-apiserver
+    command: api-server            # Airflow 3: replaces `webserver`, also serves the Execution API
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/version"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow-scheduler
+    command: scheduler             # runs tasks (LocalExecutor) that report to the Execution API
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-apiserver:
+        condition: service_healthy
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    container_name: airflow-dag-processor
+    command: dag-processor         # Airflow 3: DAG parsing is its own component
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
 
   kafka-s3-sink:
     depends_on:
@@ -130,6 +198,7 @@ volumes:
   kafka_data:
     name: banking_kafka_data
   airflow_postgres_data:
+  airflow_logs:
   postgres_data:
 networks:
   default:

@@ -44,7 +44,7 @@ jobs:
       - run: uv run --frozen python ci/run_dbt_emulator.py
 
   dags:
-    name: Airflow DAG import
+    name: Airflow DAGs + compose
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -58,6 +58,12 @@ jobs:
       - run: |
           uv venv .airflow-venv
           uv pip install -p .airflow-venv "apache-airflow==3.3.2" apache-airflow-providers-snowflake pytest
-      - run: .airflow-venv/bin/python -m pytest -q tests/test_dag_integrity.py tests/test_snowflake_copy.py
+      - run: .airflow-venv/bin/python -m pytest -q tests/test_dag_integrity.py tests/test_snowflake_copy.py tests/test_connections.py
         env:
           AIRFLOW_HOME: ${{ runner.temp }}/airflow
+      # Compose needs its env files to exist; placeholders are enough to validate the file.
+      - name: docker compose config (airflow profile)
+        run: |
+          touch consumer/.env snowflake/.env
+          printf 'POSTGRES_USER=ci\nPOSTGRES_PASSWORD=ci\nPOSTGRES_DB=ci\nKAFKA_CLUSTER_ID=ci\n' > .env
+          docker compose --profile airflow config --quiet

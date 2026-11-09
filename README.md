@@ -261,10 +261,18 @@ POSTGRES_DB=banking
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5434
 
-# Used by the optional Airflow services defined in Compose.
+# Required by the Kafka service. Generate once:
+#   docker run --rm apache/kafka:latest /opt/kafka/bin/kafka-storage.sh random-uuid
+KAFKA_CLUSTER_ID=replace-with-generated-uuid
+
+# Airflow (only used with `--profile airflow`). Defaults apply when unset; change them
+# anywhere other than a local machine.
 AIRFLOW_DB_USER=airflow
 AIRFLOW_DB_PASSWORD=replace-with-another-local-password
 AIRFLOW_DB_NAME=airflow
+AIRFLOW_ADMIN_USER=admin
+AIRFLOW_ADMIN_PASSWORD=admin
+AIRFLOW_JWT_SECRET=replace-with-a-long-random-string
 ```
 
 Create `kafka-debezium/.env` with the same database name and credentials, but the **Docker-network** database address. The script runs on the host, while the registered connector connects from inside Docker:
@@ -362,6 +370,48 @@ uv run python3 data-generator/generator.py replay \
 
 This scenario changes source records and records the planned/delivered changes in the replay audit tables. Original transactions remain protected. Without explicit flags, replay defaults to 50 simulated updates and 20 deletes.
 
+### 7. Set up Snowflake
+
+Run these scripts once, in a Snowsight worksheet, in this order:
+
+| Step | Script | Notes |
+|---|---|---|
+| 1 | `snowflake/00_bootstrap.sql` | Warehouse, database, schemas, `FINANCE_DBT_ROLE` |
+| 2 | `snowflake/01_storage_integration.sql` | Set your IAM role ARN and bucket first |
+| 3 | `DESC INTEGRATION BANKING_S3_INTEGRATION` | Put `STORAGE_AWS_IAM_USER_ARN` and `STORAGE_AWS_EXTERNAL_ID` into the IAM role's trust policy |
+| 4 | `snowflake/02_stage_and_raw.sql` | CDC stage, file format, `RAW.CDC_EVENTS` |
+| 5 | `snowflake/05_audit_control_tables.sql` | `AUDIT` tables and views |
+| 6 | `snowflake/06_audit_stages.sql` | Source-snapshot and dead-letter stages |
+
+Copy `snowflake/.env.example` to `snowflake/.env` and fill in the credentials. Airflow, dbt and `scripts/reconcile.py` all read this one file.
+
+### 8. Run the warehouse pipeline with Airflow
+
+Airflow 3 runs as five services: `airflow-postgres`, a one-shot `airflow-init` (`db migrate` plus admin user), `airflow-apiserver` (UI and Execution API), `airflow-scheduler` (LocalExecutor) and `airflow-dag-processor`. They sit behind a Compose profile, so steps 3–6 never build the Airflow image.
+
+```bash
+docker compose --profile airflow build
+docker compose --profile airflow up -d
+docker compose logs airflow-init          # ends with "airflow-init complete"
+docker compose ps                         # airflow-apiserver (healthy), scheduler and dag-processor up
+```
+
+Open http://localhost:8080 and sign in with `AIRFLOW_ADMIN_USER` / `AIRFLOW_ADMIN_PASSWORD`. Then:
+
+1. **Trigger `banking_preflight`.** Its three tasks check, in order: mounted SQL and dbt files; the dbt profile and Snowflake login (`dbt debug`); Snowflake objects and S3 access through the stage. A failure names the broken piece.
+2. **Unpause `banking_s3_snowflake`.** Every 15 minutes it loads new S3 files into `RAW`, loads the audit feeds, runs `dbt build`, and records each load in `AUDIT.LOAD_BATCH`.
+
+```sql
+SELECT target_table, status, files_loaded, rows_loaded, error_message, finished_at
+FROM BANKING_LAKEHOUSE.AUDIT.LOAD_BATCH ORDER BY finished_at DESC LIMIT 10;
+```
+
+Source-versus-warehouse reconciliation stays manual until a snapshot exists:
+
+1. Quiesce replay.
+2. Run `scripts/export_source_windows.py`.
+3. Run either `scripts/reconcile.py --snapshot-run-id <id> --source-caught-up`, or set `SOURCE_SNAPSHOT_ID` and `RECON_WATERMARK_VERIFIED=true` in `snowflake/.env` so the DAG's last task runs it.
+
 ## Tests
 
 Every push and pull request runs [`.github/workflows/ci.yml`](.github/workflows/ci.yml); none of it needs cloud credentials.
@@ -369,8 +419,8 @@ Every push and pull request runs [`.github/workflows/ci.yml`](.github/workflows/
 | Job | What it proves |
 |---|---|
 | lint + unit tests | Consumer parsing and storage, plus Snowflake `COPY` result handling used by the DAG |
-| dbt build on Snowflake emulator | All models and data tests build on fixture CDC events, then nine outcome checks: transport dedup, deletes, origin labelling, account and loan SCD2 version-in-force, `-1`/`-2` conditional keys, and detection of an injected 5.00 balance variance |
-| Airflow DAG import | The DAG loads in Airflow 3.3.2 with the expected task order |
+| dbt build on Snowflake emulator | All models and data tests build on fixture CDC events, then twelve outcome checks: transport dedup, deletes, origin labelling, account and loan SCD2 version-in-force, `-1`/`-2` conditional keys, detection of an injected 5.00 balance variance, and Debezium re-snapshot handling |
+| Airflow DAG import | Both DAGs load in Airflow 3.3.2 with the expected task order; the Snowflake connection builder handles credentials safely; `docker compose --profile airflow config` resolves |
 
 Run them locally:
 
@@ -409,7 +459,6 @@ The self-check refuses the Compose database port `5434` and any database with ex
 ## Known gaps
 
 - **Replay delivery reconciliation:** `replay_run` and `replay_event` are not yet copied to Snowflake, so expected-versus-delivered CDC checks are designed but not running.
-- **Warehouse runbook:** the Setup section covers the CDC-to-S3 path; Snowflake setup is the numbered scripts in `snowflake/` and has not been written up as a step-by-step guide.
 - **Incremental models:** Silver and Gold rebuild as full tables on each run, which suits the 1M-transaction dataset but not unbounded growth.
 - **Delivery semantics:** The sink is designed for at-least-once delivery. End-to-end duplicate handling and automated recovery checks still need the downstream layers.
 - **Failure handling:** Malformed events stop the sink; a dead-letter queue and its remediation workflow are modelled but not implemented. Consumer-loop and rebalance behavior are not covered by the current unit suite.

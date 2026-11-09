@@ -1,0 +1,6 @@
+# Only the root-context build (the Airflow image) reads this. Allowlist what it COPYs so the
+# dataset, virtualenvs and logs are never sent to the Docker daemon.
+*
+!dockerfile-airflow.dockerfile
+!docker/airflow/
+!docker/dags/banking_pipeline/connections.py

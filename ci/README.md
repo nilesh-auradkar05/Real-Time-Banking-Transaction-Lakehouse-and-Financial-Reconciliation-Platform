@@ -18,6 +18,7 @@
 | Loan status update between repayments | Same, for `dim_loan` |
 | Matched ROB and CCW, unmatched ROB, plain deposit | `-1` / `-2` conditional keys |
 | Stated balance 5.00 off on one day | `VARIANCE` in the daily balance check |
+| Debezium re-snapshot re-sends a transaction, an account and a loan as `op = 'r'` | Facts keep the original commit time and SCD2 versions; no new dimension versions; `was_resnapshotted` set |
 
 ## Emulator differences
 
@@ -30,3 +31,12 @@ These keep CI runnable; none change the SQL sent to Snowflake.
 | `TO_CHAR(date, 'YYYYMMDD')` mistranslated | Models use the arithmetic `date_key` macro on every target |
 
 Stages, `COPY INTO`, storage integrations and warehouse behaviour are not emulated.
+
+## Known blind spots
+
+DuckDB accepts some SQL that Snowflake rejects, so a green emulator run is necessary but not sufficient.
+
+| Accepted here, rejected by Snowflake | Seen in |
+|---|---|
+| Correlated `NOT EXISTS` subquery with a non-equality predicate | `fact_account_balance_daily`, now an anti-join (`LEFT JOIN … WHERE successor.transaction_id IS NULL`) |
+| `TRY_TO_NUMBER` without scale returning decimals; Snowflake returns `NUMBER(38,0)` | `07_copy_source_windows.sql`, now guarded by `tests/test_snowflake_copy.py` |

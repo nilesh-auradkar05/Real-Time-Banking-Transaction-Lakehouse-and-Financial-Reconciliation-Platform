@@ -129,7 +129,8 @@ def build() -> list[dict]:
 
     # ---- History replay (op c) and simulated changes (op u / d) ------------------------
     # Account 10: three clean days. ROB matches order 700, CCW matches card 500.
-    s.emit("fin_trans", "c", 10, after=_trans(1, 10, D1, 1000, 1000, "C", "VKLAD", minutes=10))
+    t1 = _trans(1, 10, D1, 1000, 1000, "C", "VKLAD", minutes=10)
+    s.emit("fin_trans", "c", 10, after=t1)
     s.emit("fin_trans", "c", 11, after=_trans(2, 10, D1, -50, 950, "D", "ROB", "SIPO", "AB",
                                                12345, minutes=11))
     s.emit("fin_trans", "c", 12, after=_trans(3, 10, D2, -100, 850, "D", "CCW", minutes=12))
@@ -138,9 +139,10 @@ def build() -> list[dict]:
            before={"account_id": 10, "district_id": 1, "create_date": _days(date(2012, 3, 24)),
                    "frequency": "M", "synthetic_batch_id": None, "data_origin": CZ,
                    "last_replay_event_id": None, "updated_at": _ts(snap)},
-           after={"account_id": 10, "district_id": 1, "create_date": _days(date(2012, 3, 24)),
-                  "frequency": "W", "synthetic_batch_id": None, "data_origin": CZ,
-                  "last_replay_event_id": 9001, "updated_at": _ts(30)})
+           after=(acct10_w := {"account_id": 10, "district_id": 1,
+                               "create_date": _days(date(2012, 3, 24)), "frequency": "W",
+                               "synthetic_batch_id": None, "data_origin": CZ,
+                               "last_replay_event_id": 9001, "updated_at": _ts(30)}))
     s.emit("fin_trans", "c", 40, after=_trans(4, 10, D3, 200, 1050, "C", "VKLAD", minutes=40))
     # Unmatched ROB: no partner details, so order_key must be -2.
     s.emit("fin_trans", "c", 41, after=_trans(5, 10, D3, -20, 1030, "D", "ROB", minutes=41))
@@ -148,10 +150,10 @@ def build() -> list[dict]:
     # Account 20: loan repayments either side of a loan-status update; day 3 stated balance
     # is deliberately wrong by 5.00, which must surface as VARIANCE.
     s.emit("fin_trans", "c", 15, after=_trans(6, 20, D1, 500, 500, "C", "VKLAD", minutes=15))
-    s.emit("fin_trans", "c", 20, after=_trans(7, 20, D2, -100, 400, "D", "PREVOD", "LO",
-                                               "CD", 777, minutes=20))
-    s.emit("fin_loan", "u", 35, before=loan,
-           after={**loan, "status": "D", "last_replay_event_id": 9002, "updated_at": _ts(35)})
+    t7 = _trans(7, 20, D2, -100, 400, "D", "PREVOD", "LO", "CD", 777, minutes=20)
+    s.emit("fin_trans", "c", 20, after=t7)
+    loan_d = {**loan, "status": "D", "last_replay_event_id": 9002, "updated_at": _ts(35)}
+    s.emit("fin_loan", "u", 35, before=loan, after=loan_d)
     s.emit("fin_trans", "c", 50, after=_trans(8, 20, D3, -100, 305, "D", "PREVOD", "LO",
                                                "CD", 777, minutes=50))
 
@@ -165,13 +167,21 @@ def build() -> list[dict]:
     # Duplicate transport delivery: same Kafka coordinates landed again in another file.
     dup = dict(s.rows[-3]); dup["src_filename"] = dup["src_filename"].replace("offsets=1", "offsets=2")
     s.rows.append(dup)
+
+    # Debezium re-snapshot (connector restart / offsets reset): unchanged rows arrive again as
+    # op r with new Kafka offsets and a later commit clock. They must not move a transaction's
+    # commit time (and so its SCD2 versions) or create new dimension versions.
+    s.emit("fin_trans", "r", 90, after=t1)
+    s.emit("fin_trans", "r", 90, after=t7)
+    s.emit("fin_account", "r", 90, after=acct10_w)
+    s.emit("fin_loan", "r", 90, after=loan_d)
     return s.rows
 
 
 # Assertions run after `dbt build`. Each query must return exactly the expected rows.
 EXPECTED: dict[str, tuple[str, list[tuple]]] = {
     "transport dedup keeps one row per Kafka coordinate": (
-        "select count(*), count(distinct event_id) from SILVER.STG_CDC_EVENTS", [(27, 27)]),
+        "select count(*), count(distinct event_id) from SILVER.STG_CDC_EVENTS", [(31, 31)]),
     "delete is kept as is_deleted, not dropped": (
         "select transaction_id, is_deleted from GOLD.FACT_TRANSACTION "
         "where transaction_id = 900000002", [(900000002, True)]),
@@ -198,6 +208,16 @@ EXPECTED: dict[str, tuple[str, list[tuple]]] = {
          (20, D2, "RECONCILED", 0), (20, D3, "VARIANCE", 5)]),
     "balance chain survives the account SCD2 change (one row per account-day)": (
         "select count(*) from GOLD.FACT_ACCOUNT_BALANCE_DAILY where account_id = 10", [(3,)]),
+    "re-snapshot keeps each transaction's original commit time": (
+        "select transaction_id, source_committed_at from GOLD.FACT_TRANSACTION "
+        "where transaction_id in (1, 7) order by 1",
+        [(1, datetime(2026, 11, 1, 0, 10)), (7, datetime(2026, 11, 1, 0, 20))]),
+    "re-snapshotted rows are flagged, others are not": (
+        "select transaction_id, was_resnapshotted from GOLD.FACT_TRANSACTION "
+        "where transaction_id in (1, 2, 7) order by 1", [(1, True), (2, False), (7, True)]),
+    "re-snapshot of unchanged rows adds no SCD2 versions": (
+        "select (select count(*) from GOLD.DIM_ACCOUNT where account_id = 10), "
+        "(select count(*) from GOLD.DIM_LOAN where loan_id = 600)", [(2, 2)]),
     "loan repayment progress": (
         "select payments_made, amount_repaid, amount_outstanding from GOLD.FACT_LOAN",
         [(2, 200, 1000)]),

@@ -17,8 +17,9 @@ from banking_pipeline.snowflake_copy import read_copy_statement, summarize_copy
 log = logging.getLogger(__name__)
 
 SNOWFLAKE_CONN_ID = "snowflake_banking"
-# docker-compose.snowflake.yml mounts ./snowflake here (and ./scripts under it).
+# docker-compose.yml mounts ./snowflake and ./scripts read-only at these paths.
 SQL_HOME = Path(os.getenv("SNOWFLAKE_SQL_HOME", "/opt/airflow/snowflake"))
+SCRIPTS_HOME = Path(os.getenv("BANKING_SCRIPTS_HOME", "/opt/airflow/scripts"))
 DBT_PROJECT_DIR = os.getenv("DBT_PROJECT_DIR", "/opt/airflow/banking_dbt")
 DBT_BIN = os.getenv("DBT_BIN", "/opt/airflow/dbt_venv/bin/dbt")
 
@@ -107,7 +108,7 @@ def banking_s3_snowflake():
         if os.getenv("RECON_WATERMARK_VERIFIED", "false").lower() != "true":
             raise RuntimeError("Set RECON_WATERMARK_VERIFIED=true only after verifying "
                                "source/warehouse CDC watermarks")
-        subprocess.run(["python3", str(SQL_HOME / "scripts" / "reconcile.py"),
+        subprocess.run(["python3", str(SCRIPTS_HOME / "reconcile.py"),
                         "--snapshot-run-id", snapshot_id, "--source-caught-up"],
                        check=True, env=os.environ.copy(), timeout=900)
 

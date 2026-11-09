@@ -14,7 +14,8 @@ with owners as (
   select max(trans_date) as as_of_date from {{ ref('fin_trans') }} where not is_deleted
 ), loan as (
   select l.*,
-    coalesce(to_timestamp_ntz(l.source_event_ts_ms, 3),
+    coalesce(to_timestamp_ntz(l.source_first_committed_ts_ms, 3),
+             to_timestamp_ntz(l.source_event_ts_ms, 3),
              convert_timezone('UTC', l.warehouse_loaded_at)::timestamp_ntz) as cdc_at
   from {{ ref('fin_loan') }} l
 ), account_version as (

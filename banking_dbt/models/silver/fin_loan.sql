@@ -18,5 +18,8 @@ select
     event_id as last_event_id,
     event_ts_ms as source_event_ts_ms,
     raw_loaded_at as warehouse_loaded_at,
+    first_event_ts_ms as source_first_committed_ts_ms,
+    first_raw_loaded_at as warehouse_first_loaded_at,
+    snapshot_read_count,
     kafka_offset as last_kafka_offset
 from latest
