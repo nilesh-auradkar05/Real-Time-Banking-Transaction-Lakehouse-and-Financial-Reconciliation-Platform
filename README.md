@@ -8,7 +8,7 @@ A banking data platform that turns historical transactions into a stream of real
 
 The project is built around two questions: **did every source change reach its destination, and do the resulting balances still reconcile?** Historical banking data supplies the business relationships; controlled replay supplies inserts, updates, deletes and late arrivals that exercise the pipeline.
 
-The pipeline runs from PostgreSQL through **S3 landing, Snowflake RAW and dbt Silver/Gold**, orchestrated by an Airflow 3 DAG that records every load in `AUDIT.LOAD_BATCH`. Daily balance reconciliation runs in dbt; source-versus-warehouse account-window reconciliation runs as an optional DAG step. Replay-event delivery reconciliation and Power BI are the next layers. The intended delivery model is **near-real-time analytics**: continuous CDC capture followed by batch or micro-batch warehouse loads.
+The pipeline runs from PostgreSQL through **S3 landing, Snowflake RAW and dbt Silver/Gold**, orchestrated by an Airflow 3 DAG that records every load in `AUDIT.LOAD_BATCH`. Daily balance reconciliation runs in dbt; source-versus-warehouse account-window reconciliation runs as an optional DAG step. Replay-delivery reconciliation proves that every change the simulator committed reached the warehouse exactly once and measures each hop's latency. Power BI is the next layer. The intended delivery model is **near-real-time analytics**: continuous CDC capture followed by batch or micro-batch warehouse loads.
 
 ![Banking platform architecture: source replay, PostgreSQL CDC, Kafka, object storage, warehouse layers and analytics](docs/Banking%20CDC%20Analytics%20Platform%20Diagram.png)
 
@@ -190,7 +190,7 @@ The reconciliation design checks **transport completeness** separately from **fi
 
 | Check | Intended evidence or rule |
 |---|---|
-| Expected versus delivered changes | Compare `replay_event` with observed CDC by source key and operation; retain planned-but-undelivered changes |
+| Expected versus delivered changes | `recon_replay_delivery`: every `replay_event` matched to delivered CDC, classified, with per-hop latency (below) |
 | Source versus target windows | Compare counts and signed amounts by account, time window and data origin |
 | Daily balances | `closing_balance = prior_stated_closing_balance + daily_net_amount`, within `0.02` |
 | Standing-order payments | Match account, partner bank/account and absolute amount; record missing or ambiguous matches |
@@ -200,7 +200,49 @@ The reconciliation design checks **transport completeness** separately from **fi
 
 The source has dates without transaction times, and transaction IDs are not chronological. Reconciliation therefore works at **account-day grain** rather than assuming per-row running balances can be reconstructed by ID. Ambiguous same-day closing balances need explicit exception handling.
 
-The [modelling notes](docs/data_model.md#reconciliation-rules-tested-against-the-full-dataset) contain the recorded dataset profiling results and edge cases. Those results inform the design. `fact_account_balance_daily` implements the account-day balance rule and labels every day `RECONCILED`, `VARIANCE`, `AMBIGUOUS_CLOSING` or `NO_COMPARABLE_PREVIOUS_DAY`; `scripts/reconcile.py` writes source-versus-warehouse count and amount checks to `AUDIT.RECON_*`. Comparing `replay_event` with delivered CDC is not implemented yet.
+The [modelling notes](docs/data_model.md#reconciliation-rules-tested-against-the-full-dataset) contain the recorded dataset profiling results and edge cases. Those results inform the design. `fact_account_balance_daily` implements the account-day balance rule and labels every day `RECONCILED`, `VARIANCE`, `AMBIGUOUS_CLOSING` or `NO_COMPARABLE_PREVIOUS_DAY`; `scripts/reconcile.py` writes source-versus-warehouse count and amount checks to `AUDIT.RECON_*`. Replay-delivery reconciliation is described below.
+
+### Replay-delivery reconciliation
+
+Every simulated change is written to `replay_event` before it commits. Airflow's `sync_replay_audit` task copies `replay_run` and `replay_event` from PostgreSQL into `AUDIT` with a `MERGE`, **outside Debezium and Kafka**, so a fault in the pipeline under test cannot also lose the evidence of what should have arrived. dbt then matches the expected changes against delivered CDC:
+
+| Expected operation | Matched on |
+|---|---|
+| insert, update | the replay id in the after-image (`last_replay_event_id`) |
+| delete | table and record key (a delete's before-image carries the *previous* replay id) |
+| re-snapshot read (`op = 'r'`) | never a delivery; it re-sends existing state |
+
+| Status | Meaning |
+|---|---|
+| `DELIVERED` | Exactly one delivery |
+| `DUPLICATE_DELIVERY` | Same change at more than one Kafka position (at-least-once re-send) |
+| `RECOVERED_BY_SNAPSHOT` | Change event lost, but a later Debezium snapshot read carries this exact change (its replay id). Current state is right; the event's commit time, SCD2 version and latency are lost. Inserts and updates only; **warns** |
+| `MISSING` | Committed longer ago than the grace window (30 min), neither delivered nor recovered; **fails the build** until acknowledged |
+| `PENDING` | Committed inside the grace window, or planned in a replay that is still running |
+| `NOT_COMMITTED` | Planned by a replay that ended without committing it |
+| `UNEXPECTED_CHANGE` | A warehouse change no replay event explains; **fails the build** |
+
+`AUDIT.RECON_REPLAY_SUMMARY` reports, per replay run:
+- the count for each status;
+- `delivered_pct` (the change event arrived) and `state_converged_pct` (the state arrived, by event or snapshot), among changes old enough to judge;
+- how many injected `late_arrival` faults were delivered;
+- p50/p95 latency for each hop: PostgreSQL commit → Kafka → S3 landing → Snowflake load.
+
+```sql
+SELECT * FROM BANKING_LAKEHOUSE.AUDIT.RECON_REPLAY_SUMMARY ORDER BY replay_run_id;
+SELECT * FROM BANKING_LAKEHOUSE.AUDIT.RECON_REPLAY_DELIVERY WHERE delivery_status NOT IN ('DELIVERED', 'PENDING');
+```
+
+**Acknowledging a reviewed loss.** A `MISSING` change cannot heal by itself, so it would fail every later build. After investigating, record it in `AUDIT.RECON_ACKNOWLEDGEMENT`. It then stops failing the build, but stays `MISSING` with `is_acknowledged` and the reason. An acknowledgement covers only changes committed before it was given, so later losses still fail. A row with `REPLAY_EVENT_ID` NULL acknowledges a whole run up to that moment.
+
+```sql
+INSERT INTO BANKING_LAKEHOUSE.AUDIT.RECON_ACKNOWLEDGEMENT (replay_run_id, replay_event_id, reason, acknowledged_by)
+SELECT replay_run_id, replay_event_id, '<incident and what was checked>', CURRENT_USER()
+FROM BANKING_LAKEHOUSE.AUDIT.RECON_REPLAY_DELIVERY
+WHERE delivery_status = 'MISSING' AND NOT is_acknowledged;
+```
+
+A lost **delete** leaves the row live in Silver and Gold, because a snapshot cannot show that a row is gone. Acknowledging it records the gap but does not repair it.
 
 ## Repository structure
 
@@ -289,7 +331,7 @@ Create `consumer/.env` for the host-run sink:
 
 ```dotenv
 KAFKA_BOOTSTRAP_SERVERS=localhost:29092
-KAFKA_CONSUMER_GROUP_ID=banking-cdc-s3-v1
+KAFKA_CONSUMER_GROUP=banking-cdc-s3-v1
 KAFKA_TOPIC_PATTERN=^banking_server\.public\.fin_(account|card|client|disp|district|loan|order|trans)$
 AUTO_OFFSET_RESET=earliest
 
@@ -382,6 +424,7 @@ Run these scripts once, in a Snowsight worksheet, in this order:
 | 4 | `snowflake/02_stage_and_raw.sql` | CDC stage, file format, `RAW.CDC_EVENTS` |
 | 5 | `snowflake/05_audit_control_tables.sql` | `AUDIT` tables and views |
 | 6 | `snowflake/06_audit_stages.sql` | Source-snapshot and dead-letter stages |
+| 7 | `snowflake/09_replay_audit_tables.sql` | `AUDIT.REPLAY_RUN` and `AUDIT.REPLAY_EVENT` (replaces the old views of the same names) |
 
 Copy `snowflake/.env.example` to `snowflake/.env` and fill in the credentials. Airflow, dbt and `scripts/reconcile.py` all read this one file.
 
@@ -419,7 +462,7 @@ Every push and pull request runs [`.github/workflows/ci.yml`](.github/workflows/
 | Job | What it proves |
 |---|---|
 | lint + unit tests | Consumer parsing and storage, plus Snowflake `COPY` result handling used by the DAG |
-| dbt build on Snowflake emulator | All models and data tests build on fixture CDC events, then twelve outcome checks: transport dedup, deletes, origin labelling, account and loan SCD2 version-in-force, `-1`/`-2` conditional keys, detection of an injected 5.00 balance variance, and Debezium re-snapshot handling |
+| dbt build on Snowflake emulator | All models and data tests build on fixture CDC events, then nineteen outcome checks. They cover transport dedup, deletes, origin labelling, account and loan SCD2 version-in-force, `-1`/`-2` conditional keys, detection of an injected 5.00 balance variance, Debezium re-snapshot handling, every replay-delivery status (including snapshot recovery and acknowledged losses) with its per-hop latency. The expected side is loaded through the real sync code (`MERGE` included), and the missing, unexpected and snapshot-recovered tests must fire on exactly their deliberate fixture failures |
 | Airflow DAG import | Both DAGs load in Airflow 3.3.2 with the expected task order; the Snowflake connection builder handles credentials safely; `docker compose --profile airflow config` resolves |
 
 Run them locally:
@@ -458,7 +501,7 @@ The self-check refuses the Compose database port `5434` and any database with ex
 
 ## Known gaps
 
-- **Replay delivery reconciliation:** `replay_run` and `replay_event` are not yet copied to Snowflake, so expected-versus-delivered CDC checks are designed but not running.
+- **Replay audit scale:** the sync inserts in 2,000-row batches through the connector, which suits the replay volumes here. A multi-million-event backfill should stage a file and `COPY` it instead.
 - **Incremental models:** Silver and Gold rebuild as full tables on each run, which suits the 1M-transaction dataset but not unbounded growth.
 - **Delivery semantics:** The sink is designed for at-least-once delivery. End-to-end duplicate handling and automated recovery checks still need the downstream layers.
 - **Failure handling:** Malformed events stop the sink; a dead-letter queue and its remediation workflow are modelled but not implemented. Consumer-loop and rebalance behavior are not covered by the current unit suite.

@@ -16,7 +16,14 @@ import fakesnow
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(ROOT / "docker" / "dags"))
 import fixtures  # noqa: E402
+from banking_pipeline import replay_audit  # noqa: E402
+
+# Gating tests that the fixtures trip on purpose, with the number of failing rows each must
+# report. They run at warn severity here (error in production), so a silent pass is caught.
+EXPECTED_WARNINGS = {"assert_no_missing_replay_events": 1, "assert_no_unexpected_replay_changes": 1,
+                     "assert_no_snapshot_recovered_replay_events": 1}
 
 COLUMNS = ["event_id", "topic", "kafka_partition", "kafka_offset", "kafka_timestamp_ms",
            "source_database", "source_schema", "source_table", "op", "record_pk",
@@ -40,6 +47,8 @@ def raw_table_ddl() -> str:
 # the inputs these models use; it runs only in CI and never changes the production SQL.
 EMULATOR_SHIMS = {
     "try_to_timestamp_ntz(x)": "TRY_CAST(x AS TIMESTAMP)",
+    "try_to_timestamp_tz(x)":
+        "COALESCE(TRY_CAST(x AS TIMESTAMPTZ), TRY_STRPTIME(x, '%Y-%m-%d %H:%M:%S.%g %z'))",
 }
 SCHEMAS = ("RAW", "SILVER", "GOLD", "AUDIT")
 
@@ -66,19 +75,50 @@ def seed(conn) -> None:
     for row in rows:
         cur.execute(sql, {c: row[c] for c in COLUMNS})
     print(f"seeded RAW.CDC_EVENTS with {len(rows)} landed rows")
+    seed_replay_audit(cur)
 
 
-def run_dbt(work: Path) -> bool:
+def seed_replay_audit(cur) -> None:
+    """Expected side, created from the production DDL and loaded through the same sync code
+    Airflow runs (MERGE included)."""
+    text = (ROOT / "snowflake" / "09_replay_audit_tables.sql").read_text()
+    for stmt in re.split(r";\s*\n", text):
+        body = "\n".join(line for line in stmt.splitlines() if not line.strip().startswith("--")).strip()
+        if body.upper().startswith(("CREATE", "DROP")):
+            cur.execute(body)
+    res = replay_audit.write(cur, fixtures.REPLAY_RUNS, [fixtures.REPLAY_EVENTS],
+                             synced_at=fixtures.SYNCED_AT, wm=0)
+    print(f"synced AUDIT.REPLAY_RUN={res.runs} AUDIT.REPLAY_EVENT={res.events}")
+    for ack in fixtures.RECON_ACKS:
+        cur.execute("INSERT INTO AUDIT.RECON_ACKNOWLEDGEMENT (REPLAY_RUN_ID, REPLAY_EVENT_ID, REASON, "
+                    "ACKNOWLEDGED_BY, ACKNOWLEDGED_AT) VALUES (%s, %s, %s, %s, %s)", ack)
+
+
+def run_dbt(work: Path) -> list[str]:
+    """Return problems: a failed build, or a gating test that did not fire as the fixtures expect."""
     from dbt.cli.main import dbtRunner
 
     os.environ["DBT_TARGET"] = "ci"
     project = ROOT / "banking_dbt"
+    dbt_vars = f'{{recon_as_of: "{fixtures.AS_OF}", replay_recon_severity: warn}}'
     result = dbtRunner().invoke([
         "build", "--project-dir", str(project), "--profiles-dir", str(project / "profiles"),
         "--target-path", str(work / "target"), "--log-path", str(work / "logs"),
-        "--threads", "1",
+        "--threads", "1", "--vars", dbt_vars,
     ])
-    return bool(result.success)
+    if not result.success:
+        return ["dbt build failed"]
+    problems = []
+    seen = {r.node.name: r for r in result.result.results if r.node.name in EXPECTED_WARNINGS}
+    for name, failures in EXPECTED_WARNINGS.items():
+        r = seen.get(name)
+        status = str(getattr(r, "status", "missing")).lower()
+        if r is None or status != "warn" or r.failures != failures:
+            problems.append(f"{name}: expected warn with {failures} failing row(s), got "
+                            f"{status} / {getattr(r, 'failures', None)}")
+        else:
+            print(f"ok    {name} fired on {failures} deliberate failure(s)")
+    return problems
 
 
 def check(conn) -> list[str]:
@@ -103,13 +143,15 @@ def main() -> int:
         conn = snowflake.connector.connect(database="BANKING_LAKEHOUSE")
         seed(conn)
         install_shims(conn)
-        if not run_dbt(Path(tmp)):
+        problems = run_dbt(Path(tmp))
+        if problems and problems[0] == "dbt build failed":
             print("dbt build failed", file=sys.stderr)
             return 1
-        failures = check(conn)
+        failures = problems + check(conn)
     for f in failures:
         print(f, file=sys.stderr)
-    print(f"{len(fixtures.EXPECTED) - len(failures)}/{len(fixtures.EXPECTED)} outcome checks passed")
+    total = len(fixtures.EXPECTED) + len(EXPECTED_WARNINGS)
+    print(f"{total - len(failures)}/{total} outcome checks passed")
     return 1 if failures else 0
 
 

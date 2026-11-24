@@ -11,11 +11,13 @@ USER airflow
 # Pin Airflow while adding providers so pip cannot change the base image version.
 # fab: username/password login (FabAuthManager). snowflake: the COPY and preflight tasks.
 # python-dotenv: scripts/reconcile.py loads snowflake/.env (only transitively present otherwise).
+# psycopg2-binary: sync_replay_audit reads replay_run / replay_event from the banking database.
 RUN pip install --no-cache-dir \
       "apache-airflow==${AIRFLOW_VERSION}" \
       apache-airflow-providers-fab \
       apache-airflow-providers-snowflake \
-      python-dotenv
+      python-dotenv \
+      psycopg2-binary
 
 ENV DBT_VENV_PATH=/opt/airflow/dbt_venv
 

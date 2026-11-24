@@ -95,24 +95,3 @@ SELECT
     landed_at
 FROM AUDIT.CDC_EVENT
 LIMIT 10;
-
-
--- Optional CDC replay source controls. Views remain empty until these tables are captured.
-CREATE OR REPLACE VIEW AUDIT.REPLAY_EVENT AS
-SELECT try_to_number(after_json:replay_event_id::varchar) AS replay_event_id,
-       try_to_number(after_json:replay_run_id::varchar) AS replay_run_id,
-       after_json:source_table::varchar AS source_table,
-       try_to_number(after_json:record_pk::varchar) AS record_pk,
-       after_json:operation::varchar AS operation,
-       after_json:data_origin::varchar AS data_origin,
-       after_json:business_date::varchar AS business_date,
-       TRY_TO_NUMBER(after_json:amount::varchar, 18, 2) AS amount,
-       event_id AS cdc_transport_id
-FROM RAW.CDC_EVENTS WHERE source_table='replay_event' AND op IN ('c','r','u');
-
-CREATE OR REPLACE VIEW AUDIT.REPLAY_RUN AS
-SELECT try_to_number(after_json:replay_run_id::varchar) AS replay_run_id,
-       after_json:scenario::varchar AS scenario,
-       after_json:status::varchar AS status,
-       event_id AS cdc_transport_id
-FROM RAW.CDC_EVENTS WHERE source_table='replay_run' AND op IN ('c','r','u');

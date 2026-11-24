@@ -10,13 +10,19 @@
 -- Timestamp-with-timezone may be epoch milliseconds or ISO string; the source
 -- date carries no timezone, so cast as NTZ for reporting.
 {% macro cdc_timestamp(field) -%}
-  (case when try_to_number({{ field }}::varchar) is not null then
+(case
+   when try_to_number({{ field }}::varchar) is not null then
      case when abs(try_to_number({{ field }}::varchar)) >= 100000000000000
-       then to_timestamp_ntz(try_to_number({{ field }}::varchar), 6)
-       when abs(try_to_number({{ field }}::varchar)) >= 100000000000
-       then to_timestamp_ntz(try_to_number({{ field }}::varchar), 3)
-       else to_timestamp_ntz(try_to_number({{ field }}::varchar)) end
-     else try_to_timestamp_ntz({{ field }}::varchar) end)
+            then to_timestamp_ntz(try_to_number({{ field }}::varchar), 6)
+          when abs(try_to_number({{ field }}::varchar)) >= 100000000000
+            then to_timestamp_ntz(try_to_number({{ field }}::varchar), 3)
+          else to_timestamp_ntz(try_to_number({{ field }}::varchar)) end
+   -- String with an offset (Z, +00:00, -0800): keep the moment, express it in UTC
+   when regexp_like(trim({{ field }}::varchar), '.*(Z|[+-][0-9]{2}:?[0-9]{2})$') then
+     convert_timezone('UTC', try_to_timestamp_tz(trim({{ field }}::varchar)))::timestamp_ntz
+   -- String with no offset: the writer's convention is UTC
+   else try_to_timestamp_ntz({{ field }}::varchar)
+ end)
 {%- endmacro %}
 
 -- PostgreSQL LSN is ordered at source; Kafka offset is meaningful only inside one partition.

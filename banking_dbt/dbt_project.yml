@@ -21,3 +21,11 @@ models:
     gold:
       +schema: GOLD
       +materialized: table
+    reconciliation:
+      +schema: AUDIT
+      +materialized: table
+
+vars:
+  # Committed changes younger than this are PENDING, not MISSING: two 15-minute DAG intervals.
+  replay_grace_minutes: 30
+  replay_recon_severity: error

@@ -1,0 +1,20 @@
+version: 2
+models:
+  - name: recon_replay_delivery
+    description: One row per expected replay change, plus warehouse changes no replay event explains.
+    columns:
+      - name: replay_event_id
+        description: Unique among expected rows; NULL only on some UNEXPECTED_CHANGE rows.
+        data_tests:
+          - unique:
+              config:
+                where: "delivery_status <> 'UNEXPECTED_CHANGE'"
+      - name: delivery_status
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [DELIVERED, DUPLICATE_DELIVERY, RECOVERED_BY_SNAPSHOT, MISSING, PENDING,
+                         NOT_COMMITTED, UNEXPECTED_CHANGE]
+  - name: recon_replay_summary
+    description: Per replay run delivery counts, delivered %, and p50/p95 latency per hop.

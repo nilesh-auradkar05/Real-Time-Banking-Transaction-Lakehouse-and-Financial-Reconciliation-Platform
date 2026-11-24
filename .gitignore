@@ -24,3 +24,15 @@ plugins/
 # dbt anonymous-usage id, written into the profiles dir on first run
 .user.yml
 docker/postgres
+.airflow-venv
+.github
+.pytest_cache
+.ruff_cache
+
+# files
+before.txt
+after.txt
+pg-connector.json
+
+# Zip files
+banking_kafka_data-2026-11-22.tgz

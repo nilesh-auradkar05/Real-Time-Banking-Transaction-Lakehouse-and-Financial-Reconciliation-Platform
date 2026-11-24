@@ -9,8 +9,28 @@ import json
 from datetime import date, datetime, timedelta, timezone
 
 T0 = datetime(2026, 11, 1, tzinfo=timezone.utc)          # snapshot commit time
-LOADED_AT = T0 + timedelta(hours=1)                      # warehouse COPY time
+LOADED_AT = T0 + timedelta(hours=2)                      # warehouse COPY time
+SYNCED_AT = LOADED_AT                                    # replay audit sync start (expected side)
+AS_OF = "2026-11-01 02:00:00"                            # recon_as_of for the emulator build
 EPOCH = date(1970, 1, 1)
+
+PST = timezone(timedelta(hours=-8))
+
+def _landing_text(ts, variant: int) -> str:
+    """landing_ingested_at as Snowflake can store it. Every variant is the same instant.
+
+    0: TIMESTAMP_TZ::VARCHAR under TIMEZONE=America/Los_Angeles (the production format that
+       hid an 8-hour error), 1: ISO with Z, 2: ISO with +00:00, 3: no offset (writer's UTC).
+    """
+    ts = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+    utc = ts.astimezone(timezone.utc)
+    if variant == 0:
+        return ts.astimezone(PST).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " -0800"
+    if variant == 1:
+        return utc.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    if variant == 2:
+        return utc.isoformat(timespec="milliseconds")
+    return utc.replace(tzinfo=None).isoformat(timespec="milliseconds")
 
 
 def _ms(minutes: float) -> int:
@@ -61,7 +81,7 @@ class Stream:
             "key_json": json.dumps({pk: row_img.get(pk)}),
             "before_json": json.dumps(before) if before is not None else None,
             "after_json": json.dumps(after) if after is not None else None,
-            "landing_ingested_at": LOADED_AT.isoformat(),
+            "landing_ingested_at": _landing_text(LOADED_AT, offset % 4),
             "src_filename": f"landing/cdc/table={table}/offsets={file_no}.parquet",
             "src_file_row_number": offset,
             "raw_loaded_at": LOADED_AT,
@@ -75,13 +95,13 @@ D1, D2, D3 = date(2013, 1, 5), date(2013, 1, 6), date(2013, 1, 7)
 
 
 def _trans(tid, acct, d, amount, balance, ttype, op_code=None, category=None,
-           bank=None, other=None, origin=CZ, batch=None, minutes=10.0):
+           bank=None, other=None, origin=CZ, batch=None, minutes=10.0, replay=None):
     return {"trans_id": tid, "account_id": acct, "trans_date": _days(d),
             "amount": f"{amount:.2f}", "balance": f"{balance:.2f}", "trans_type": ttype,
             "operation": op_code, "category": category, "other_bank_id": bank,
             "other_account_id": other, "recorded_at": _ts(minutes),
             "synthetic_batch_id": batch, "data_origin": origin,
-            "last_replay_event_id": None, "updated_at": _ts(minutes)}
+            "last_replay_event_id": replay, "updated_at": _ts(minutes)}
 
 
 def build() -> list[dict]:
@@ -126,14 +146,19 @@ def build() -> list[dict]:
              "amount": "50.00", "category": "SIPO", "data_origin": CZ,
              "last_replay_event_id": None, "updated_at": _ts(snap)}
     s.emit("fin_order", "r", snap, after=order)
+    order701 = {"order_id": 701, "account_id": 20, "bank_to": "EF", "account_to": 555,
+                "amount": "80.00", "category": "UVER", "data_origin": CZ,
+                "last_replay_event_id": None, "updated_at": _ts(snap)}
+    s.emit("fin_order", "r", snap, after=order701)
 
     # ---- History replay (op c) and simulated changes (op u / d) ------------------------
     # Account 10: three clean days. ROB matches order 700, CCW matches card 500.
-    t1 = _trans(1, 10, D1, 1000, 1000, "C", "VKLAD", minutes=10)
+    t1 = _trans(1, 10, D1, 1000, 1000, "C", "VKLAD", minutes=10, replay=1001)
     s.emit("fin_trans", "c", 10, after=t1)
     s.emit("fin_trans", "c", 11, after=_trans(2, 10, D1, -50, 950, "D", "ROB", "SIPO", "AB",
-                                               12345, minutes=11))
-    s.emit("fin_trans", "c", 12, after=_trans(3, 10, D2, -100, 850, "D", "CCW", minutes=12))
+                                               12345, minutes=11, replay=1002))
+    t3 = _trans(3, 10, D2, -100, 850, "D", "CCW", minutes=12, replay=1003)
+    s.emit("fin_trans", "c", 12, after=t3)
     # Simulated update: account 10 statement frequency (drives dim_account SCD2).
     s.emit("fin_account", "u", 30,
            before={"account_id": 10, "district_id": 1, "create_date": _days(date(2012, 3, 24)),
@@ -143,19 +168,23 @@ def build() -> list[dict]:
                                "create_date": _days(date(2012, 3, 24)), "frequency": "W",
                                "synthetic_batch_id": None, "data_origin": CZ,
                                "last_replay_event_id": 9001, "updated_at": _ts(30)}))
-    s.emit("fin_trans", "c", 40, after=_trans(4, 10, D3, 200, 1050, "C", "VKLAD", minutes=40))
+    s.emit("fin_trans", "c", 40, after=_trans(4, 10, D3, 200, 1050, "C", "VKLAD", minutes=40,
+                                               replay=1004))
     # Unmatched ROB: no partner details, so order_key must be -2.
-    s.emit("fin_trans", "c", 41, after=_trans(5, 10, D3, -20, 1030, "D", "ROB", minutes=41))
+    s.emit("fin_trans", "c", 41, after=_trans(5, 10, D3, -20, 1030, "D", "ROB", minutes=41,
+                                               replay=1005))
 
     # Account 20: loan repayments either side of a loan-status update; day 3 stated balance
     # is deliberately wrong by 5.00, which must surface as VARIANCE.
-    s.emit("fin_trans", "c", 15, after=_trans(6, 20, D1, 500, 500, "C", "VKLAD", minutes=15))
-    t7 = _trans(7, 20, D2, -100, 400, "D", "PREVOD", "LO", "CD", 777, minutes=20)
+    s.emit("fin_trans", "c", 15, after=_trans(6, 20, D1, 500, 500, "C", "VKLAD", minutes=15,
+                                               replay=1006))
+    t7 = _trans(7, 20, D2, -100, 400, "D", "PREVOD", "LO", "CD", 777, minutes=20, replay=1007)
     s.emit("fin_trans", "c", 20, after=t7)
     loan_d = {**loan, "status": "D", "last_replay_event_id": 9002, "updated_at": _ts(35)}
     s.emit("fin_loan", "u", 35, before=loan, after=loan_d)
+    # Injected late arrival: intended at minute 45, committed at 50 (replay_event 1008).
     s.emit("fin_trans", "c", 50, after=_trans(8, 20, D3, -100, 305, "D", "PREVOD", "LO",
-                                               "CD", 777, minutes=50))
+                                               "CD", 777, minutes=50, replay=1008))
 
     # Faker account: insert, then a simulated delete of a synthetic transaction.
     fk1 = _trans(900000001, 900000010, D1, 300, 300, "C", "VKLAD", origin=FK, batch=1, minutes=60)
@@ -175,13 +204,73 @@ def build() -> list[dict]:
     s.emit("fin_trans", "r", 90, after=t7)
     s.emit("fin_account", "r", 90, after=acct10_w)
     s.emit("fin_loan", "r", 90, after=loan_d)
+    # Order 701's update (replay 9008) was lost as a change event; the re-snapshot carries its
+    # state and replay id, so it is RECOVERED_BY_SNAPSHOT. Client 1 is re-read WITHOUT its lost
+    # update (replay 9004): a snapshot of the right row that lacks the change must stay MISSING.
+    s.emit("fin_order", "r", 90, after={**order701, "amount": "96.00",
+                                        "last_replay_event_id": 9008, "updated_at": _ts(60)})
+    s.emit("fin_client", "r", 90, after={
+        "client_id": 1, "birth_date": _days(date(1970, 12, 13)), "gender": "F", "district_id": 1,
+        "synthetic_batch_id": None, "data_origin": CZ, "last_replay_event_id": None,
+        "updated_at": _ts(snap)})
+
+    # At-least-once re-send: Debezium re-emits transaction 3 at a new offset (DUPLICATE_DELIVERY).
+    s.emit("fin_trans", "c", 12, after=t3)
+    # A change no replay event explains: client 2 updated with an unknown replay id (UNEXPECTED).
+    client2 = {"client_id": 2, "birth_date": _days(date(1970, 12, 13)), "gender": "F",
+               "district_id": 2, "synthetic_batch_id": None, "data_origin": CZ,
+               "last_replay_event_id": None, "updated_at": _ts(0)}
+    s.emit("fin_client", "u", 80, before=client2,
+           after={**client2, "district_id": 1, "last_replay_event_id": 9999, "updated_at": _ts(80)})
     return s.rows
+
+
+# ---- Expected side: AUDIT.REPLAY_RUN / AUDIT.REPLAY_EVENT, as synced from PostgreSQL ----------
+def _at(minutes):
+    return None if minutes is None else T0 + timedelta(minutes=minutes)
+
+
+REPLAY_RUNS = [
+    # (replay_run_id, scenario, random_seed, speed_factor, started_at, ended_at, status)
+    (1, "default", 42, 0, _at(0), _at(116), "completed"),
+    (2, "default", 43, 0, _at(100), _at(101), "interrupted"),
+    (3, "default", 44, 0, _at(110), None, "running"),
+]
+
+
+def _ev(eid, run, table, pk, op, committed, origin=CZ, intended=None, delay=0, fault=None):
+    return (eid, run, table, pk, op, origin, D1, None, _at(intended if intended is not None else committed),
+            _at(committed), delay, fault)
+
+
+REPLAY_EVENTS = [
+    *[_ev(1000 + tid, 1, "fin_trans", tid, "c", m)
+      for tid, m in [(1, 10), (2, 11), (3, 12), (4, 40), (5, 41), (6, 15), (7, 20)]],
+    _ev(1008, 1, "fin_trans", 8, "c", 50, intended=45, delay=300, fault="late_arrival"),
+    _ev(9001, 1, "fin_account", 10, "u", 30),
+    _ev(9002, 1, "fin_loan", 600, "u", 35),
+    _ev(9003, 1, "fin_trans", 900000002, "d", 70, origin=FK),   # matched on (table, key)
+    _ev(9004, 1, "fin_client", 1, "u", 20),                     # committed, never delivered
+    _ev(9005, 1, "fin_order", 700, "u", 115),                   # committed 5 min before as_of
+    _ev(9006, 2, "fin_trans", 9, "c", None),                    # interrupted run, never committed
+    _ev(9007, 3, "fin_account", 20, "u", None),                 # running replay, not committed yet
+    _ev(9008, 1, "fin_order", 701, "u", 60),                    # event lost, state via re-snapshot
+    _ev(9011, 1, "fin_account", 10, "u", 70),                   # lost, then acknowledged
+]
+
+# AUDIT.RECON_ACKNOWLEDGEMENT: (replay_run_id, replay_event_id, reason, acknowledged_by, acknowledged_at)
+RECON_ACKS = [
+    # Run-wide, given at minute 15: covers nothing, because both losses committed later (20, 70).
+    (1, None, "fixture: run-wide ack before the losses", "ci", _at(15)),
+    (1, 9011, "fixture: reviewed loss", "ci", _at(100)),
+]
+
 
 
 # Assertions run after `dbt build`. Each query must return exactly the expected rows.
 EXPECTED: dict[str, tuple[str, list[tuple]]] = {
     "transport dedup keeps one row per Kafka coordinate": (
-        "select count(*), count(distinct event_id) from SILVER.STG_CDC_EVENTS", [(31, 31)]),
+        "select count(*), count(distinct event_id) from SILVER.STG_CDC_EVENTS", [(36, 36)]),
     "delete is kept as is_deleted, not dropped": (
         "select transaction_id, is_deleted from GOLD.FACT_TRANSACTION "
         "where transaction_id = 900000002", [(900000002, True)]),
@@ -218,6 +307,40 @@ EXPECTED: dict[str, tuple[str, list[tuple]]] = {
     "re-snapshot of unchanged rows adds no SCD2 versions": (
         "select (select count(*) from GOLD.DIM_ACCOUNT where account_id = 10), "
         "(select count(*) from GOLD.DIM_LOAN where loan_id = 600)", [(2, 2)]),
+    "replay delivery: every status is assigned as designed": (
+        "select replay_event_id, delivery_status, delivery_count "
+        "from AUDIT.RECON_REPLAY_DELIVERY order by 1",
+        [(1001, "DELIVERED", 1), (1002, "DELIVERED", 1), (1003, "DUPLICATE_DELIVERY", 2),
+           (1004, "DELIVERED", 1), (1005, "DELIVERED", 1), (1006, "DELIVERED", 1),
+           (1007, "DELIVERED", 1), (1008, "DELIVERED", 1), (9001, "DELIVERED", 1),
+           (9002, "DELIVERED", 1), (9003, "DELIVERED", 1), (9004, "MISSING", 0),
+           (9005, "PENDING", 0), (9006, "NOT_COMMITTED", 0), (9007, "PENDING", 0),
+           (9008, "RECOVERED_BY_SNAPSHOT", 0), (9011, "MISSING", 0),
+           (9999, "UNEXPECTED_CHANGE", 1)]),
+    "replay delivery: acknowledgement covers only changes committed before it": (
+        "select replay_event_id, is_acknowledged, acknowledgement_reason "
+        "from AUDIT.RECON_REPLAY_DELIVERY where delivery_status = 'MISSING' order by 1",
+        [(9004, False, None), (9011, True, "fixture: reviewed loss")]),
+    "replay delivery: per-hop latency for a delivered change": (
+        "select capture_seconds, landing_seconds, load_seconds, end_to_end_seconds, "
+        "commit_delay_seconds from AUDIT.RECON_REPLAY_DELIVERY where replay_event_id in (1001, 1008) "
+        "order by replay_event_id",
+        [(0.05, 6599.95, 0, 6600, 0), (0.05, 4199.95, 0, 4200, 300)]),
+    "landing timestamp parsed in UTC for every string format": (
+        "select count(*) > 0, "
+        "sum(case when load_seconds is null or abs(load_seconds) > 0.001 then 1 else 0 end), "
+        "sum(case when landing_seconds < 0 then 1 else 0 end) "
+        "from AUDIT.RECON_REPLAY_DELIVERY where kafka_at is not null",
+        [(True, 0, 0)]),
+    "replay summary per run": (
+        "select replay_run_id, planned_changes, delivered, duplicate_delivered, missing, "
+        "missing_acknowledged, recovered_by_snapshot, pending, not_committed, unexpected_changes, "
+        "late_injected, late_delivered, delivered_pct, state_converged_pct "
+        "from AUDIT.RECON_REPLAY_SUMMARY order by replay_run_id nulls last",
+        [(1, 15, 10, 1, 1, 1, 1, 1, 0, 0, 1, 1, 78.57, 85.71),
+         (2, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, None, None),
+         (3, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, None, None),
+         (None, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, None, None)]),
     "loan repayment progress": (
         "select payments_made, amount_repaid, amount_outstanding from GOLD.FACT_LOAN",
         [(2, 200, 1000)]),

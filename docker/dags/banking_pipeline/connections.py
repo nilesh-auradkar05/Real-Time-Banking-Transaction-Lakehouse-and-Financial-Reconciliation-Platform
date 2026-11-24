@@ -49,3 +49,24 @@ if __name__ == "__main__":
     except ValueError as exc:
         print(f"snowflake connection not configured: {exc}", file=sys.stderr)
         sys.exit(2)
+
+
+# Banking source database, reached from the Airflow containers over the Compose network.
+# docker-compose.yml maps the root .env POSTGRES_* values onto these names; the host is the
+# service name, never the host-side POSTGRES_HOST=localhost.
+PG_REQUIRED = ("BANKING_PG_USER", "BANKING_PG_PASSWORD", "BANKING_PG_DB")
+
+
+def postgres_params(env: Mapping[str, str]) -> dict:
+    absent = [n for n in PG_REQUIRED if not env.get(n, "").strip()]
+    if absent:
+        raise ValueError(f"missing {', '.join(absent)}")
+    return {
+        "host": env.get("BANKING_PG_HOST", "").strip() or "postgres",
+        "port": int(env.get("BANKING_PG_PORT", "").strip() or 5432),
+        "dbname": env["BANKING_PG_DB"].strip(),
+        "user": env["BANKING_PG_USER"].strip(),
+        "password": env["BANKING_PG_PASSWORD"],
+        "connect_timeout": 10,
+        "application_name": "airflow_replay_audit_sync",
+    }

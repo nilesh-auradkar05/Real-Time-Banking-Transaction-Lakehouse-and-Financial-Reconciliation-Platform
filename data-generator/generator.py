@@ -23,12 +23,13 @@ import threading
 import time
 from collections import deque
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 import psycopg2
 from dotenv import load_dotenv
-from faker import VERSION as FAKER_VERSION, Faker
+from faker import VERSION as FAKER_VERSION
+from faker import Faker
 from loguru import logger
 from psycopg2.extras import execute_values
 

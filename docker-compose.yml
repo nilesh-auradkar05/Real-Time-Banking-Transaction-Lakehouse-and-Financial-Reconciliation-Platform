@@ -29,6 +29,12 @@ x-airflow-common: &airflow-common
     DBT_PROJECT_DIR: /opt/airflow/banking_dbt
     DBT_TARGET: prod
     DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
+    # Banking source DB for the replay audit sync (root .env values; host is the service name).
+    BANKING_PG_HOST: postgres
+    BANKING_PG_PORT: "5432"
+    BANKING_PG_DB: ${POSTGRES_DB:-banking}
+    BANKING_PG_USER: ${POSTGRES_USER:-banking}
+    BANKING_PG_PASSWORD: ${POSTGRES_PASSWORD:-}
   volumes:
     - ./docker/dags:/opt/airflow/dags:ro
     - airflow_logs:/opt/airflow/logs      # named volume: bind mounts on NTFS/WSL are not writable by uid 50000
@@ -41,7 +47,7 @@ x-airflow-common: &airflow-common
 
 services:
   kafka:
-    image: apache/kafka:latest
+    image: apache/kafka:${KAFKA_VERSION:?Set KAFKA_VERSION in .env}
     container_name: kafka
     restart: unless-stopped
     ports:
@@ -49,6 +55,7 @@ services:
       - "29092:29092" # host machine access
     environment:
       CLUSTER_ID: ${KAFKA_CLUSTER_ID:?Set KAFKA_CLUSTER_ID in .env}
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,PLAINTEXT_HOST://:29092
@@ -58,6 +65,8 @@ services:
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_LOG_RETENTION_MS: "-1"
+      KAFKA_OFFSETS_RETENTION_MINUTES: "525600"
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
@@ -85,6 +94,7 @@ services:
 
   postgres:
     image: postgres:15
+    restart: unless-stopped
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -92,7 +102,7 @@ services:
     ports:
       - "5434:5432"
     volumes:
-      - ./docker/postgres/data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     command: >
       postgres -c wal_level=logical
               -c max_wal_senders=10
@@ -182,6 +192,7 @@ services:
         condition: service_completed_successfully
 
   kafka-s3-sink:
+    profiles: ["docker-sink"]
     depends_on:
       - kafka
     build:

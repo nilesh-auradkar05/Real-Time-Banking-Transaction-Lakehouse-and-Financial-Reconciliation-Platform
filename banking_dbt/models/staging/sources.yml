@@ -6,6 +6,17 @@ sources:
     tables:
       - name: cdc_events
         identifier: CDC_EVENTS
+  - name: audit
+    description: Expected changes, copied from PostgreSQL by Airflow outside Debezium/Kafka.
+    database: BANKING_LAKEHOUSE
+    schema: AUDIT
+    tables:
+      - name: replay_run
+        identifier: REPLAY_RUN
+      - name: replay_event
+        identifier: REPLAY_EVENT
+      - name: recon_acknowledgement
+        identifier: RECON_ACKNOWLEDGEMENT
 models:
   - name: stg_cdc_events
     description: Deduplicated transport envelopes (one row per kafka topic/partition/offset).

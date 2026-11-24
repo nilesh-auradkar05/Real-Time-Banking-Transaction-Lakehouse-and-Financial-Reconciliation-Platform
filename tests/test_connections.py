@@ -1,7 +1,8 @@
 import json
 
 import pytest
-from banking_pipeline.connections import missing, snowflake_connection_json
+
+from docker.dags.banking_pipeline.connections import missing, snowflake_connection_json
 
 BASE = {"SNOWFLAKE_ACCOUNT": "org-acct", "SNOWFLAKE_USER": "loader", "SNOWFLAKE_PASSWORD": "p"}
 
@@ -29,3 +30,13 @@ def test_missing_credentials_are_reported_not_defaulted():
         "SNOWFLAKE_USER", "SNOWFLAKE_PASSWORD"]
     with pytest.raises(ValueError):
         snowflake_connection_json({})
+
+
+def test_postgres_params_use_service_host_and_require_credentials():
+    from docker.dags.banking_pipeline.connections import postgres_params
+
+    p = postgres_params({"BANKING_PG_USER": "banking", "BANKING_PG_PASSWORD": "x",
+                         "BANKING_PG_DB": "banking"})
+    assert (p["host"], p["port"], p["dbname"]) == ("postgres", 5432, "banking")
+    with pytest.raises(ValueError, match="BANKING_PG_PASSWORD"):
+        postgres_params({"BANKING_PG_USER": "u", "BANKING_PG_DB": "d"})

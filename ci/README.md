@@ -19,6 +19,17 @@
 | Matched ROB and CCW, unmatched ROB, plain deposit | `-1` / `-2` conditional keys |
 | Stated balance 5.00 off on one day | `VARIANCE` in the daily balance check |
 | Debezium re-snapshot re-sends a transaction, an account and a loan as `op = 'r'` | Facts keep the original commit time and SCD2 versions; no new dimension versions; `was_resnapshotted` set |
+| Replay ids on every replayed change, synced through `replay_audit.write` | `DELIVERED` for inserts, updates and the delete (matched on key) |
+| Transaction 3 re-emitted at a new Kafka offset | `DUPLICATE_DELIVERY` |
+| Client 1 update committed, never delivered | `MISSING`; `assert_no_missing_replay_events` fires on exactly that row |
+| Order update committed 5 minutes before `as_of`; account update planned in a running replay | `PENDING` |
+| Event from an interrupted replay with no commit | `NOT_COMMITTED` |
+| Client 2 update with a replay id the expected set lacks | `UNEXPECTED_CHANGE`; `assert_no_unexpected_replay_changes` fires on exactly that row |
+| Injected `late_arrival` (intended minute 45, committed 50) | Delivered, `commit_delay_seconds = 300` |
+| Order 701 update lost; re-snapshot carries its state and replay id | `RECOVERED_BY_SNAPSHOT`; the warn test fires |
+| Client 1 re-snapshotted *without* its lost update | Stays `MISSING`: a snapshot of the right row is not enough, it must carry the change |
+| Account 10 update lost, acknowledged after commit | `MISSING`, `is_acknowledged`; excluded from the gate |
+| Run-wide acknowledgement given before the losses committed | Covers nothing |
 
 ## Emulator differences
 

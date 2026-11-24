@@ -9,13 +9,22 @@ from airflow.dag_processing.dagbag import DagBag  # noqa: E402
 DAGS = Path(__file__).resolve().parents[1] / "docker" / "dags"
 
 
+def _upstream(dag):
+    return {t.task_id: set(t.upstream_task_ids) for t in dag.tasks}
+
+
 def test_dags_import_cleanly():
     bag = DagBag(dag_folder=str(DAGS))
     assert bag.import_errors == {}
     dag = bag.dags.get("banking_s3_snowflake")
     assert dag is not None
-    assert [t.task_id for t in dag.topological_sort()] == [
-        "load_raw", "load_audit_feeds", "build_models", "optional_reconciliation"]
+    assert _upstream(dag) == {
+        "load_raw": set(),
+        "load_audit_feeds": {"load_raw"},
+        "sync_replay_audit": set(),
+        "build_models": {"load_audit_feeds", "sync_replay_audit"},
+        "optional_reconciliation": {"build_models"},
+    }
     assert dag.max_active_runs == 1 and not dag.catchup
 
 
@@ -23,5 +32,9 @@ def test_preflight_dag_is_manual_and_ordered():
     bag = DagBag(dag_folder=str(DAGS))
     dag = bag.dags.get("banking_preflight")
     assert dag is not None and dag.schedule is None
-    assert [t.task_id for t in dag.topological_sort()] == [
-        "check_mounts", "check_dbt_connection", "check_snowflake_objects"]
+    assert _upstream(dag) == {
+        "check_mounts": set(),
+        "check_dbt_connection": {"check_mounts"},
+        "check_snowflake_objects": {"check_dbt_connection"},
+        "check_source_db": {"check_mounts"},
+    }

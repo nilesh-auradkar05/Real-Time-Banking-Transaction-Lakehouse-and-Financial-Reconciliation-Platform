@@ -39,6 +39,7 @@ SNOWFLAKE_CHECKS = [
     ("session", "SELECT CURRENT_ACCOUNT(), CURRENT_ROLE(), CURRENT_WAREHOUSE(), CURRENT_DATABASE()"),
     ("raw table", "SELECT COUNT(*) FROM BANKING_LAKEHOUSE.RAW.CDC_EVENTS"),
     ("audit table", "SELECT COUNT(*) FROM BANKING_LAKEHOUSE.AUDIT.LOAD_BATCH"),
+    ("replay audit", "SELECT COUNT(*) FROM BANKING_LAKEHOUSE.AUDIT.REPLAY_EVENT"),
     ("cdc stage -> S3", "LIST @BANKING_LAKEHOUSE.RAW.BANKING_CDC_STAGE PATTERN = '.*__preflight__.*'"),
 ]
 
@@ -82,7 +83,20 @@ def banking_preflight():
         if failures:
             raise RuntimeError("; ".join(failures))
 
-    check_mounts() >> check_dbt_connection() >> check_snowflake_objects()
+    @task
+    def check_source_db():
+        """The replay audit sync reads the banking PostgreSQL over the Compose network."""
+        import psycopg2
+        from banking_pipeline.connections import postgres_params
+
+        with psycopg2.connect(**postgres_params(os.environ)) as pg, pg.cursor() as cur:
+            cur.execute("SELECT (SELECT COUNT(*) FROM replay_run), (SELECT COUNT(*) FROM replay_event)")
+            runs, events = cur.fetchone()
+        log.info("source db ok: replay_run=%s replay_event=%s", runs, events)
+
+    mounts = check_mounts()
+    mounts >> check_dbt_connection() >> check_snowflake_objects()
+    mounts >> check_source_db()
 
 
 banking_preflight()

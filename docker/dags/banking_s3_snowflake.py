@@ -1,6 +1,7 @@
-"""Airflow 3: S3 landing -> Snowflake RAW, audit feeds, dbt build, optional reconciliation.
+"""Airflow 3: S3 landing -> Snowflake RAW, replay audit sync, audit feeds, dbt build,
+optional source-window reconciliation.
 
-Each COPY writes one AUDIT.LOAD_BATCH row whether it succeeds or fails, so load history
+Each load writes one AUDIT.LOAD_BATCH row whether it succeeds or fails, so load history
 is queryable next to the data it produced.
 """
 from __future__ import annotations
@@ -31,12 +32,19 @@ VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP())
 """
 
 
-def _run_copy(cur, file_name: str, target_table: str) -> None:
-    """Run one COPY script, record it in AUDIT.LOAD_BATCH, and raise if any file failed."""
+def _record_load(cur, target_table: str, started: datetime, files: int, rows: int,
+                 rejected: int, status: str, error: str | None) -> None:
     ctx = get_current_context()
-    started = datetime.now(timezone.utc)
     window_start = ctx.get("data_interval_start") or started
     window_end = ctx.get("data_interval_end") or started
+    cur.execute(LOAD_BATCH_INSERT, (
+        ctx["dag"].dag_id, ctx["run_id"], target_table, window_start, window_end,
+        files, rows, rejected, status, error, started))
+
+
+def _run_copy(cur, file_name: str, target_table: str) -> None:
+    """Run one COPY script, record it in AUDIT.LOAD_BATCH, and raise if any file failed."""
+    started = datetime.now(timezone.utc)
     try:
         cur.execute(read_copy_statement(SQL_HOME, file_name))
         summary = summarize_copy(cur.fetchall())
@@ -45,10 +53,9 @@ def _run_copy(cur, file_name: str, target_table: str) -> None:
     except Exception as exc:  # recorded, then re-raised below
         log.exception("COPY %s failed", file_name)
         summary, status, error = None, "FAILED", str(exc)[:1024]
-    cur.execute(LOAD_BATCH_INSERT, (
-        ctx["dag"].dag_id, ctx["run_id"], target_table, window_start, window_end,
-        summary.files_loaded if summary else 0, summary.rows_loaded if summary else 0,
-        summary.rows_rejected if summary else 0, status, error, started))
+    _record_load(cur, target_table, started,
+                 summary.files_loaded if summary else 0, summary.rows_loaded if summary else 0,
+                 summary.rows_rejected if summary else 0, status, error)
     if status == "FAILED":
         raise RuntimeError(f"{target_table} COPY failed: {error}")
     log.info("%s: files=%s rows=%s rejected=%s", target_table, summary.files_loaded,
@@ -88,13 +95,47 @@ def banking_s3_snowflake():
             ("07b_copy_dead_letters.sql", "AUDIT.DEAD_LETTER_EVENT"),
         ])
 
+    @task(retries=2)
+    def sync_replay_audit():
+        """Copy replay_run / replay_event (the expected changes) from PostgreSQL. synced_at is
+        taken BEFORE reading, so every change committed earlier is guaranteed to be included."""
+        import psycopg2
+        from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
+        from banking_pipeline.connections import postgres_params
+        from banking_pipeline.replay_audit import sync
+
+        started = datetime.now(timezone.utc)
+        pg = psycopg2.connect(**postgres_params(os.environ))
+        conn = SnowflakeHook(snowflake_conn_id=SNOWFLAKE_CONN_ID).get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("USE WAREHOUSE BANKING_ETL_WH")
+                cur.execute("USE DATABASE BANKING_LAKEHOUSE")
+                try:
+                    result = sync(pg, cur, synced_at=started)
+                except Exception as exc:
+                    log.exception("replay audit sync failed")
+                    _record_load(cur, "AUDIT.REPLAY_EVENT", started, 0, 0, 0, "FAILED", str(exc)[:1024])
+                    conn.commit()
+                    raise
+                _record_load(cur, "AUDIT.REPLAY_EVENT", started, 0, result.events, 0, "SUCCESS", None)
+                conn.commit()
+                log.info("replay audit: watermark=%s runs=%s events=%s",
+                         result.watermark, result.runs, result.events)
+        finally:
+            conn.close()
+            pg.close()
+
     @task(retries=1)
     def build_models():
         env = os.environ.copy()
         env.setdefault("DBT_TARGET", "prod")
         # The project may be mounted read-only, so artifacts and logs go to /tmp.
+        # --no-partial-parse: the project is a bind mount edited on the host, and a stale
+        # /tmp/dbt/target/partial_parse.msgpack once kept an old schema.yml test definition.
+        # A full parse of this project takes ~2 s, well inside a 15-minute schedule.
         subprocess.run(
-            [DBT_BIN, "build", "--project-dir", DBT_PROJECT_DIR,
+            [DBT_BIN, "build", "--no-partial-parse", "--project-dir", DBT_PROJECT_DIR,
              "--profiles-dir", f"{DBT_PROJECT_DIR}/profiles",
              "--target-path", "/tmp/dbt/target", "--log-path", "/tmp/dbt/logs"],
             check=True, env=env, timeout=1800)
@@ -112,7 +153,9 @@ def banking_s3_snowflake():
                         "--snapshot-run-id", snapshot_id, "--source-caught-up"],
                        check=True, env=os.environ.copy(), timeout=900)
 
-    load_raw() >> load_audit_feeds() >> build_models() >> optional_reconciliation()
+    # The expected-side sync is independent of the S3 loads; dbt needs both.
+    raw = load_raw()
+    [raw >> load_audit_feeds(), sync_replay_audit()] >> build_models() >> optional_reconciliation()
 
 
 banking_s3_snowflake()
