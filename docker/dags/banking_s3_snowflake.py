@@ -84,6 +84,21 @@ def _snowflake_cursor_session(copies: list[tuple[str, str]]) -> None:
      schedule="*/15 * * * *", catchup=False, max_active_runs=1,
      tags=["banking", "cdc", "snowflake", "dbt", "reconciliation"])
 def banking_s3_snowflake():
+
+    @task(retries=0)
+    def check_cdc_position():
+        """Stop the run when Debezium's saved LSN is ahead of PostgreSQL's WAL: the loads
+        would still succeed, but with no new changes (the 2026-11-23 incident)."""
+        from banking_pipeline.connections import postgres_params
+
+        pg = postgres_params(os.environ)
+        env = {**os.environ, "KAFKA_BOOTSTRAP_SERVERS": "kafka:9092",
+               "POSTGRES_HOST": pg["host"], "POSTGRES_PORT": str(pg["port"]),
+               "POSTGRES_USER": pg["user"], "POSTGRES_PASSWORD": pg["password"],
+               "POSTGRES_DB": pg["dbname"]}
+        subprocess.run(["python3", str(SCRIPTS_HOME / "check_cdc_position.py")],
+                       check=True, env=env, timeout=60)
+
     @task(retries=2)
     def load_raw():
         _snowflake_cursor_session([("03_copy_into_raw.sql", "RAW.CDC_EVENTS")])
@@ -154,7 +169,7 @@ def banking_s3_snowflake():
                        check=True, env=os.environ.copy(), timeout=900)
 
     # The expected-side sync is independent of the S3 loads; dbt needs both.
-    raw = load_raw()
+    raw = check_cdc_position() >> load_raw()
     [raw >> load_audit_feeds(), sync_replay_audit()] >> build_models() >> optional_reconciliation()
 
 

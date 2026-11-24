@@ -19,7 +19,8 @@ def test_dags_import_cleanly():
     dag = bag.dags.get("banking_s3_snowflake")
     assert dag is not None
     assert _upstream(dag) == {
-        "load_raw": set(),
+        "check_cdc_position": set(),
+        "load_raw": {"check_cdc_position"},
         "load_audit_feeds": {"load_raw"},
         "sync_replay_audit": set(),
         "build_models": {"load_audit_feeds", "sync_replay_audit"},

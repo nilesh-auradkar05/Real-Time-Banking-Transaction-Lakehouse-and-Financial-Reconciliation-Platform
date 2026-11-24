@@ -12,12 +12,14 @@ USER airflow
 # fab: username/password login (FabAuthManager). snowflake: the COPY and preflight tasks.
 # python-dotenv: scripts/reconcile.py loads snowflake/.env (only transitively present otherwise).
 # psycopg2-binary: sync_replay_audit reads replay_run / replay_event from the banking database.
+# confluent-kafka: check_cdc_position reads Debezium's saved LSN from the connect-offsets topic.
 RUN pip install --no-cache-dir \
       "apache-airflow==${AIRFLOW_VERSION}" \
       apache-airflow-providers-fab \
       apache-airflow-providers-snowflake \
       python-dotenv \
-      psycopg2-binary
+      psycopg2-binary \
+      confluent-kafka
 
 ENV DBT_VENV_PATH=/opt/airflow/dbt_venv
 
